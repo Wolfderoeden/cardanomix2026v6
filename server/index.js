@@ -24,6 +24,7 @@ import { findProduct, PRODUCTS } from "./lib/products.js";
 import {
   createOrder,
   createUser,
+  ensureAdminBootstrap,
   findUserByEmail,
   readOrders,
   summarizeOrders,
@@ -282,6 +283,7 @@ export function createApp() {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT || 8787);
+  await ensureAdminBootstrap();
   createApp().listen(port, "127.0.0.1", () => {
     console.log(`CardanoMix API listening on http://127.0.0.1:${port}`);
   });
