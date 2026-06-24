@@ -374,7 +374,7 @@ function Storefront({ state, setState, refreshPrice }) {
             <div className="hero-copy">
               <span className="eyebrow">Live ADA vouchers</span>
               <h1>CardanoMix</h1>
-              <p>Clean voucher checkout with direct customer accounts, Binance-priced ADA quotes, and instant order notification.</p>
+              <p>Clean voucher checkout with direct customer accounts, Binance-priced ADA quotes, and admin order review.</p>
               <PriceBadge price={state.price} onRefresh={refreshPrice} />
             </div>
             <img className="hero-asset" src="/assets/voucher-stack.svg" alt="Stacked ADA voucher cards" />
@@ -548,8 +548,8 @@ function AdminDashboard({ state, setState, refreshPrice }) {
           </div>
           <div className="metric-card">
             <ShieldCheck size={20} />
-            <span>Gmail</span>
-            <strong>{summary?.mailerConfigured ? "Ready" : "Missing"}</strong>
+            <span>Storage</span>
+            <strong>{summary?.database || "Ready"}</strong>
           </div>
         </section>
 
@@ -567,7 +567,7 @@ function AdminDashboard({ state, setState, refreshPrice }) {
               <span>Customer</span>
               <span>Total</span>
               <span>ADA</span>
-              <span>Email</span>
+              <span>Created</span>
               <span>Status</span>
             </div>
             {orders.map((order) => (
@@ -576,7 +576,7 @@ function AdminDashboard({ state, setState, refreshPrice }) {
                 <span>{order.customer.email}</span>
                 <span>{currency.format(order.totalEur)}</span>
                 <span>{order.adaAmount}</span>
-                <span>{order.emailDelivery?.status || "pending"}</span>
+                <span>{new Date(order.createdAt).toLocaleDateString()}</span>
                 <span className="status-cell">
                   <StatusPill value={order.status} />
                   <select value={order.status} onChange={(event) => setOrderStatus(order.id, event.target.value)} aria-label={`Set status for ${order.publicId}`}>

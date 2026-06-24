@@ -120,10 +120,6 @@ export async function createOrder(orderInput) {
     status: "new",
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
-    emailDelivery: {
-      delivered: false,
-      status: "pending"
-    },
     ...orderInput
   };
   orders.unshift(order);

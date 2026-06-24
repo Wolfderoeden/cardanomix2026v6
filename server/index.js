@@ -19,7 +19,6 @@ import {
   verifyPassword
 } from "./lib/auth.js";
 import { fetchAdaPrice, quoteAdaAmount } from "./lib/binance.js";
-import { sendOrderNotification, isMailerConfigured, requiresEmailDelivery } from "./lib/mailer.js";
 import { findProduct, PRODUCTS } from "./lib/products.js";
 import {
   createOrder,
@@ -110,8 +109,7 @@ export function createApp() {
   app.get("/api/health", async (_req, res) => {
     res.json({
       ok: true,
-      mailerConfigured: isMailerConfigured(),
-      emailRequired: requiresEmailDelivery(),
+      database: "local-json",
       quoteCurrency: process.env.ADA_QUOTE_CURRENCY || "EUR"
     });
   });
@@ -199,27 +197,7 @@ export function createApp() {
         adaAmount,
         price
       });
-
-      let emailDelivery;
-      try {
-        emailDelivery = await sendOrderNotification(order, req.user);
-      } catch (mailError) {
-        emailDelivery = {
-          delivered: false,
-          status: "failed",
-          message: mailError.message
-        };
-      }
-
-      const updatedOrder = await updateOrder(order.id, () => ({ emailDelivery }));
-      if (!emailDelivery.delivered && requiresEmailDelivery()) {
-        return res.status(502).json({
-          error: "Order was stored, but Gmail notification could not be delivered",
-          order: updatedOrder
-        });
-      }
-
-      res.status(201).json({ order: updatedOrder });
+      res.status(201).json({ order });
     } catch (error) {
       next(error);
     }
@@ -238,8 +216,7 @@ export function createApp() {
     try {
       res.json({
         summary: await summarizeOrders(),
-        mailerConfigured: isMailerConfigured(),
-        emailRequired: requiresEmailDelivery()
+        database: "local-json"
       });
     } catch (error) {
       next(error);
