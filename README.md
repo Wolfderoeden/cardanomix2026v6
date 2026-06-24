@@ -5,9 +5,12 @@ Modern ADA voucher storefront with a separate admin dashboard, direct website us
 ## What is included
 
 - Arctic storefront for customers and Midnight admin dashboard.
-- Website-native registration and login. No ChatGPT auth is used.
+- Website-native customer registration and login with Cardano wallet addresses. No ChatGPT auth is used.
 - Admin login via email and password only.
-- Live ADA pricing from Binance on every price request and every order quote.
+- Live ADA/USD pricing from Binance on every price request and every order quote.
+- Fixed voucher denominations plus custom ADA amount checkout.
+- PayPal Checkout order links with editable return/cancel/fallback routing in admin.
+- Admin order delete and Excel-compatible CSV export.
 - Admin order review without Gmail side effects.
 - HttpOnly session cookies, password hashing, rate limiting, and server-side order totals.
 - Netlify Blobs persistence in production and file-backed local persistence in `data/`.
@@ -51,7 +54,21 @@ https://cardanomix.com/admin
 
 ## Binance settings
 
-The app requests Binance market data from `https://data-api.binance.vision/api/v3/ticker/price?symbol=ADAEUR` first, then falls back to other Binance public endpoints. Change `ADA_QUOTE_CURRENCY` if you want another Binance quote currency.
+The app displays dollar pricing and requests Binance market data from `https://data-api.binance.vision/api/v3/ticker/price?symbol=ADAUSDT` first, then falls back to other Binance public endpoints. Keep `ADA_QUOTE_CURRENCY=USD` for dollar pricing.
+
+## PayPal settings
+
+Set these in Netlify environment variables. Mark the secret as secret in Netlify.
+
+```text
+PAYPAL_ENV=sandbox
+PAYPAL_CLIENT_ID=your-client-id
+PAYPAL_CLIENT_SECRET=your-client-secret
+PAYPAL_RETURN_URL=https://cardanomix2026.netlify.app/
+PAYPAL_CANCEL_URL=https://cardanomix2026.netlify.app/
+```
+
+The admin dashboard can edit return, cancel, and fallback PayPal links stored in Netlify Blobs.
 
 ## Checks
 

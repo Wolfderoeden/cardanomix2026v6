@@ -4,14 +4,18 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  Download,
+  ExternalLink,
   LayoutDashboard,
   LockKeyhole,
   LogOut,
   Moon,
   RefreshCw,
+  Save,
   ShieldCheck,
   ShoppingCart,
   Snowflake,
+  Trash2,
   UserRound,
   WalletCards
 } from "lucide-react";
@@ -19,7 +23,7 @@ import "./styles.css";
 
 const currency = new Intl.NumberFormat("en-US", {
   style: "currency",
-  currency: "EUR"
+  currency: "USD"
 });
 
 function classNames(...values) {
@@ -49,6 +53,7 @@ function useBootstrap() {
     products: [],
     price: null,
     health: null,
+    settings: null,
     loading: true,
     error: ""
   });
@@ -62,11 +67,12 @@ function useBootstrap() {
     let cancelled = false;
     async function load() {
       try {
-        const [me, products, price, health] = await Promise.all([
+        const [me, products, price, health, settings] = await Promise.all([
           api("/api/auth/me"),
           api("/api/products"),
           api("/api/price/ada"),
-          api("/api/health")
+          api("/api/health"),
+          api("/api/settings")
         ]);
         if (!cancelled) {
           setState({
@@ -74,6 +80,7 @@ function useBootstrap() {
             products: products.products,
             price: price.price,
             health,
+            settings,
             loading: false,
             error: ""
           });
@@ -144,7 +151,7 @@ function PriceBadge({ price, onRefresh }) {
 }
 
 function AuthPanel({ mode, setMode, onAuth }) {
-  const [form, setForm] = useState({ name: "", email: "", password: "" });
+  const [form, setForm] = useState({ name: "", walletAddress: "", password: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -178,8 +185,14 @@ function AuthPanel({ mode, setMode, onAuth }) {
         </label>
       )}
       <label>
-        Email
-        <input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required />
+        Cardano wallet
+        <input
+          value={form.walletAddress}
+          onChange={(event) => setForm({ ...form, walletAddress: event.target.value })}
+          required
+          minLength={24}
+          placeholder="addr1..."
+        />
       </label>
       <label>
         Password
@@ -198,7 +211,7 @@ function AuthPanel({ mode, setMode, onAuth }) {
 }
 
 function ProductCard({ product, adaPrice, quantity, setQuantity }) {
-  const adaAmount = adaPrice ? (product.priceEur / adaPrice.price).toFixed(4) : "0.0000";
+  const adaAmount = adaPrice ? (product.priceUsd / adaPrice.price).toFixed(4) : "0.0000";
   return (
     <article className={classNames("product-card", product.tone)}>
       <div className="voucher-face">
@@ -208,7 +221,7 @@ function ProductCard({ product, adaPrice, quantity, setQuantity }) {
       <div className="product-copy">
         <p>{product.description}</p>
         <div className="product-meta">
-          <span>{currency.format(product.priceEur)}</span>
+          <span>{currency.format(product.priceUsd)}</span>
           <span>{adaAmount} ADA</span>
         </div>
       </div>
@@ -225,9 +238,11 @@ function ProductCard({ product, adaPrice, quantity, setQuantity }) {
   );
 }
 
-function CartPanel({ products, cart, price, user, setUser, setCart }) {
+function CartPanel({ products, cart, price, user, settings, setUser, setCart }) {
   const [authMode, setAuthMode] = useState("register");
   const [orders, setOrders] = useState([]);
+  const [customAda, setCustomAda] = useState("");
+  const [paymentUrl, setPaymentUrl] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -239,12 +254,14 @@ function CartPanel({ products, cart, price, user, setUser, setCart }) {
         .map((product) => ({
           ...product,
           quantity: cart[product.id],
-          lineTotal: product.priceEur * cart[product.id]
+          lineTotal: product.priceUsd * cart[product.id]
         })),
     [cart, products]
   );
   const total = cartItems.reduce((sum, item) => sum + item.lineTotal, 0);
   const ada = price && total ? (total / price.price).toFixed(6) : "0.000000";
+  const customAdaNumber = Number(customAda);
+  const customUsd = price && Number.isFinite(customAdaNumber) && customAdaNumber > 0 ? customAdaNumber * price.price : 0;
 
   async function loadOrders() {
     if (!user) {
@@ -270,7 +287,37 @@ function CartPanel({ products, cart, price, user, setUser, setCart }) {
         }
       });
       setStatus(`Order ${payload.order.publicId} received`);
+      setPaymentUrl(payload.order.paymentUrl || "");
+      if (settings?.settings?.autoRedirectPayPal && payload.order.paymentUrl) {
+        window.location.href = payload.order.paymentUrl;
+      }
       setCart({});
+      await loadOrders();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function buyCustomAda() {
+    setBusy(true);
+    setError("");
+    setStatus("");
+    setPaymentUrl("");
+    try {
+      const payload = await api("/api/orders/custom", {
+        method: "POST",
+        body: {
+          adaAmount: Number(customAda)
+        }
+      });
+      setStatus(`Order ${payload.order.publicId} received`);
+      setPaymentUrl(payload.order.paymentUrl || "");
+      if (settings?.settings?.autoRedirectPayPal && payload.order.paymentUrl) {
+        window.location.href = payload.order.paymentUrl;
+      }
+      setCustomAda("");
       await loadOrders();
     } catch (requestError) {
       setError(requestError.message);
@@ -321,12 +368,46 @@ function CartPanel({ products, cart, price, user, setUser, setCart }) {
           </div>
           {error && <p className="form-error">{error}</p>}
           {status && <p className="form-success">{status}</p>}
+          {paymentUrl && (
+            <a className="primary-button" href={paymentUrl} target="_blank" rel="noreferrer">
+              <ExternalLink size={17} />
+              Continue to PayPal
+            </a>
+          )}
           <button className="primary-button" type="button" onClick={checkout} disabled={busy || cartItems.length === 0}>
             <WalletCards size={17} />
             {busy ? "Sending" : "Place order"}
           </button>
         </div>
       )}
+
+      <div className="custom-buy-panel">
+        <div className="mini-heading">Custom ADA buy</div>
+        <label>
+          ADA amount
+          <input
+            type="number"
+            min="1"
+            step="0.000001"
+            value={customAda}
+            onChange={(event) => setCustomAda(event.target.value)}
+            placeholder="1000"
+          />
+        </label>
+        <div className="quote-total compact">
+          <span>Live USD quote</span>
+          <strong>{currency.format(customUsd)}</strong>
+          <small>{price ? `${price.price.toFixed(4)} USD per ADA` : "Waiting for Binance"}</small>
+        </div>
+        {user ? (
+          <button className="primary-button" type="button" onClick={buyCustomAda} disabled={busy || customUsd <= 0}>
+            <ExternalLink size={17} />
+            Buy ADA with PayPal
+          </button>
+        ) : (
+          <p className="muted">Register with your wallet before buying a custom ADA amount.</p>
+        )}
+      </div>
 
       {orders.length > 0 && (
         <div className="recent-orders">
@@ -405,6 +486,7 @@ function Storefront({ state, setState, refreshPrice }) {
           cart={cart}
           price={state.price}
           user={state.user}
+          settings={state.settings}
           setUser={(user) => setState((current) => ({ ...current, user }))}
           setCart={setCart}
         />
@@ -466,16 +548,118 @@ function StatusPill({ value }) {
   return <span className={classNames("status-pill", value)}>{icon}{value}</span>;
 }
 
+function exportOrdersCsv(orders) {
+  const headers = ["Order", "Type", "Wallet", "Total USD", "ADA", "Status", "Payment URL", "Created"];
+  const rows = orders.map((order) => [
+    order.publicId,
+    order.type || "voucher",
+    order.customer?.walletAddress || order.customer?.email || "",
+    order.totalUsd ?? order.totalEur ?? 0,
+    order.adaAmount || 0,
+    order.status,
+    order.paymentUrl || "",
+    order.createdAt
+  ]);
+  const csv = [headers, ...rows]
+    .map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(","))
+    .join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `cardanomix-orders-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function AdminSettingsPanel({ settings, setSettings, paypalConfigured }) {
+  const [draft, setDraft] = useState(settings || {});
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setDraft(settings || {});
+  }, [settings]);
+
+  async function saveSettings(event) {
+    event.preventDefault();
+    setStatus("");
+    setError("");
+    try {
+      const payload = await api("/api/admin/settings", {
+        method: "PATCH",
+        body: {
+          paypalReturnUrl: draft.paypalReturnUrl || "",
+          paypalCancelUrl: draft.paypalCancelUrl || "",
+          paypalFallbackUrl: draft.paypalFallbackUrl || "",
+          autoRedirectPayPal: Boolean(draft.autoRedirectPayPal)
+        }
+      });
+      setSettings(payload.settings);
+      setStatus("PayPal links updated");
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  return (
+    <form className="settings-panel" onSubmit={saveSettings}>
+      <div className="table-head">
+        <h2>PayPal routing</h2>
+        <span className={classNames("status-pill", paypalConfigured ? "completed" : "cancelled")}>
+          {paypalConfigured ? "API ready" : "Fallback only"}
+        </span>
+      </div>
+      <div className="settings-grid">
+        <label>
+          Return URL
+          <input value={draft.paypalReturnUrl || ""} onChange={(event) => setDraft({ ...draft, paypalReturnUrl: event.target.value })} />
+        </label>
+        <label>
+          Cancel URL
+          <input value={draft.paypalCancelUrl || ""} onChange={(event) => setDraft({ ...draft, paypalCancelUrl: event.target.value })} />
+        </label>
+        <label>
+          Manual PayPal fallback link
+          <input value={draft.paypalFallbackUrl || ""} onChange={(event) => setDraft({ ...draft, paypalFallbackUrl: event.target.value })} />
+        </label>
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={Boolean(draft.autoRedirectPayPal)}
+            onChange={(event) => setDraft({ ...draft, autoRedirectPayPal: event.target.checked })}
+          />
+          Auto redirect after order
+        </label>
+      </div>
+      {error && <p className="form-error">{error}</p>}
+      {status && <p className="form-success">{status}</p>}
+      <button className="ghost-button" type="submit">
+        <Save size={16} />
+        Save PayPal links
+      </button>
+    </form>
+  );
+}
+
 function AdminDashboard({ state, setState, refreshPrice }) {
   const [orders, setOrders] = useState([]);
   const [summary, setSummary] = useState(null);
+  const [settings, setSettings] = useState(null);
+  const [paypalConfigured, setPaypalConfigured] = useState(false);
   const [error, setError] = useState("");
 
   async function loadAdmin() {
     try {
-      const [ordersPayload, summaryPayload] = await Promise.all([api("/api/admin/orders"), api("/api/admin/summary")]);
+      const [ordersPayload, summaryPayload, settingsPayload] = await Promise.all([
+        api("/api/admin/orders"),
+        api("/api/admin/summary"),
+        api("/api/admin/settings")
+      ]);
       setOrders(ordersPayload.orders);
       setSummary(summaryPayload);
+      setSettings(settingsPayload.settings);
+      setPaypalConfigured(Boolean(settingsPayload.paypalConfigured));
       setError("");
     } catch (requestError) {
       setError(requestError.message);
@@ -493,6 +677,14 @@ function AdminDashboard({ state, setState, refreshPrice }) {
       body: { status }
     });
     setOrders((current) => current.map((order) => (order.id === orderId ? payload.order : order)));
+    await loadAdmin();
+  }
+
+  async function deleteOrder(orderId) {
+    if (!window.confirm("Delete this order permanently?")) {
+      return;
+    }
+    await api(`/api/admin/orders/${orderId}`, { method: "DELETE" });
     await loadAdmin();
   }
 
@@ -539,7 +731,7 @@ function AdminDashboard({ state, setState, refreshPrice }) {
           <div className="metric-card">
             <WalletCards size={20} />
             <span>Revenue</span>
-            <strong>{currency.format(summary?.summary.revenueEur || 0)}</strong>
+            <strong>{currency.format(summary?.summary.revenueUsd || 0)}</strong>
           </div>
           <div className="metric-card">
             <Activity size={20} />
@@ -553,28 +745,38 @@ function AdminDashboard({ state, setState, refreshPrice }) {
           </div>
         </section>
 
+        {settings && (
+          <AdminSettingsPanel settings={settings} setSettings={setSettings} paypalConfigured={paypalConfigured} />
+        )}
+
         <section className="orders-table-wrap">
           <div className="table-head">
             <h2>Orders</h2>
-            <button className="ghost-button" onClick={loadAdmin} type="button">
-              <RefreshCw size={16} />
-              Refresh
-            </button>
+            <div className="table-actions">
+              <button className="ghost-button" onClick={() => exportOrdersCsv(orders)} type="button" disabled={orders.length === 0}>
+                <Download size={16} />
+                Export CSV
+              </button>
+              <button className="ghost-button" onClick={loadAdmin} type="button">
+                <RefreshCw size={16} />
+                Refresh
+              </button>
+            </div>
           </div>
           <div className="orders-table">
             <div className="orders-row header">
               <span>Order</span>
-              <span>Customer</span>
+              <span>Wallet</span>
               <span>Total</span>
               <span>ADA</span>
               <span>Created</span>
-              <span>Status</span>
+              <span>Actions</span>
             </div>
             {orders.map((order) => (
               <div className="orders-row" key={order.id}>
                 <span>{order.publicId}</span>
-                <span>{order.customer.email}</span>
-                <span>{currency.format(order.totalEur)}</span>
+                <span className="wallet-text">{order.customer?.walletAddress || order.customer?.email || "Unknown"}</span>
+                <span>{currency.format(order.totalUsd ?? order.totalEur ?? 0)}</span>
                 <span>{order.adaAmount}</span>
                 <span>{new Date(order.createdAt).toLocaleDateString()}</span>
                 <span className="status-cell">
@@ -585,6 +787,14 @@ function AdminDashboard({ state, setState, refreshPrice }) {
                     <option value="completed">completed</option>
                     <option value="cancelled">cancelled</option>
                   </select>
+                  {order.paymentUrl && (
+                    <a className="icon-button" href={order.paymentUrl} target="_blank" rel="noreferrer" aria-label="Open PayPal link" title="Open PayPal link">
+                      <ExternalLink size={15} />
+                    </a>
+                  )}
+                  <button className="icon-button danger" type="button" onClick={() => deleteOrder(order.id)} aria-label={`Delete ${order.publicId}`} title="Delete order">
+                    <Trash2 size={15} />
+                  </button>
                 </span>
               </div>
             ))}

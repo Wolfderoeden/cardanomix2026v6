@@ -4,14 +4,17 @@ import jwt from "jsonwebtoken";
 import { getStore } from "@netlify/blobs";
 import { z } from "zod";
 import { fetchAdaPrice, quoteAdaAmount } from "../../server/lib/binance.js";
+import { createPayPalOrder, paypalConfigured } from "../../server/lib/paypal.js";
 import { findProduct, PRODUCTS } from "../../server/lib/products.js";
 
 const SESSION_COOKIE = "cardanomix_session";
 const USERS_KEY = "users";
 const ORDERS_KEY = "orders";
+const SETTINGS_KEY = "settings";
 
 const authSchema = z.object({
   email: z.string().email().transform((value) => value.toLowerCase()),
+  walletAddress: z.string().trim().min(24).max(160),
   password: z.string().min(10).max(160),
   name: z.string().trim().min(2).max(80).optional()
 });
@@ -30,6 +33,17 @@ const orderSchema = z.object({
 
 const statusSchema = z.object({
   status: z.enum(["new", "reviewing", "completed", "cancelled"])
+});
+
+const customAdaOrderSchema = z.object({
+  adaAmount: z.number().positive().max(100000)
+});
+
+const settingsSchema = z.object({
+  paypalReturnUrl: z.string().url().or(z.literal("")),
+  paypalCancelUrl: z.string().url().or(z.literal("")),
+  paypalFallbackUrl: z.string().url().or(z.literal("")),
+  autoRedirectPayPal: z.boolean().optional()
 });
 
 function env(name, fallback = "") {
@@ -73,7 +87,8 @@ function signSession(user) {
     {
       sub: user.id,
       role: user.role,
-      email: user.email
+      email: user.email,
+      walletAddress: user.walletAddress
     },
     sessionSecret(),
     {
@@ -133,6 +148,7 @@ function publicUser(user) {
   return {
     id: user.id,
     email: user.email,
+    walletAddress: user.walletAddress,
     name: user.name,
     role: user.role,
     createdAt: user.createdAt
@@ -145,24 +161,39 @@ async function findUserByEmail(email) {
   return users.find((user) => user.email === normalized) || null;
 }
 
+function normalizeWalletAddress(walletAddress) {
+  return String(walletAddress || "").trim();
+}
+
+async function findUserByWallet(walletAddress) {
+  const normalized = normalizeWalletAddress(walletAddress);
+  const users = await readUsers();
+  return users.find((user) => user.walletAddress === normalized) || null;
+}
+
 async function findUserById(userId) {
   const users = await readUsers();
   return users.find((user) => user.id === userId) || null;
 }
 
-async function createUser({ email, passwordHash, name, role = "user" }) {
+async function createUser({ email, walletAddress, passwordHash, name, role = "user" }) {
   const users = await readUsers();
-  const normalized = String(email).trim().toLowerCase();
-  if (users.some((user) => user.email === normalized)) {
+  const normalizedEmail = email ? String(email).trim().toLowerCase() : null;
+  const normalizedWallet = normalizeWalletAddress(walletAddress);
+  if (role === "user" && users.some((user) => user.walletAddress === normalizedWallet)) {
+    throw Object.assign(new Error("Wallet already exists"), { status: 409 });
+  }
+  if (normalizedEmail && users.some((user) => user.email === normalizedEmail)) {
     throw Object.assign(new Error("Email already exists"), { status: 409 });
   }
 
   const now = new Date().toISOString();
   const user = {
     id: randomUUID(),
-    email: normalized,
+    email: normalizedEmail,
+    walletAddress: normalizedWallet || null,
     passwordHash,
-    name: String(name || normalized.split("@")[0]).trim(),
+    name: String(name || normalizedWallet || normalizedEmail?.split("@")[0] || "Customer").trim(),
     role,
     createdAt: now,
     updatedAt: now
@@ -244,8 +275,8 @@ function calculateOrderItems(inputItems) {
       productId: product.id,
       name: product.name,
       quantity: input.quantity,
-      unitPriceEur: product.priceEur,
-      totalEur: Number((product.priceEur * input.quantity).toFixed(2))
+      unitPriceUsd: product.priceUsd,
+      totalUsd: Number((product.priceUsd * input.quantity).toFixed(2))
     };
   });
 }
@@ -283,18 +314,94 @@ async function updateOrder(orderId, updater) {
   return orders[index];
 }
 
+async function deleteOrder(orderId) {
+  const orders = await readOrders();
+  const nextOrders = orders.filter((order) => order.id !== orderId);
+  if (nextOrders.length === orders.length) {
+    throw Object.assign(new Error("Order not found"), { status: 404 });
+  }
+  await writeOrders(nextOrders);
+  return { ok: true };
+}
+
+function defaultSettings() {
+  return {
+    paypalReturnUrl: env("PAYPAL_RETURN_URL", "https://cardanomix2026.netlify.app/"),
+    paypalCancelUrl: env("PAYPAL_CANCEL_URL", "https://cardanomix2026.netlify.app/"),
+    paypalFallbackUrl: env("PAYPAL_FALLBACK_URL", ""),
+    autoRedirectPayPal: false
+  };
+}
+
+async function readSettings() {
+  return {
+    ...defaultSettings(),
+    ...((await store().get(SETTINGS_KEY, { type: "json" })) || {})
+  };
+}
+
+async function writeSettings(settings) {
+  const nextSettings = {
+    ...defaultSettings(),
+    paypalReturnUrl: String(settings.paypalReturnUrl || "").trim(),
+    paypalCancelUrl: String(settings.paypalCancelUrl || "").trim(),
+    paypalFallbackUrl: String(settings.paypalFallbackUrl || "").trim(),
+    autoRedirectPayPal: Boolean(settings.autoRedirectPayPal)
+  };
+  await store().setJSON(SETTINGS_KEY, nextSettings);
+  return nextSettings;
+}
+
 async function summarizeOrders() {
   const orders = await readOrders();
-  const revenueEur = orders.reduce((sum, order) => sum + Number(order.totalEur || 0), 0);
+  const revenueUsd = orders.reduce((sum, order) => sum + Number(order.totalUsd ?? order.totalEur ?? 0), 0);
   const adaQuoted = orders.reduce((sum, order) => sum + Number(order.adaAmount || 0), 0);
   const pending = orders.filter((order) => order.status !== "completed").length;
 
   return {
     orderCount: orders.length,
-    revenueEur,
+    revenueUsd,
     adaQuoted,
     pending
   };
+}
+
+function paypalCredentials() {
+  return {
+    clientId: env("PAYPAL_CLIENT_ID"),
+    clientSecret: env("PAYPAL_CLIENT_SECRET"),
+    paypalEnv: env("PAYPAL_ENV", "sandbox"),
+    baseUrl: env("PAYPAL_API_BASE")
+  };
+}
+
+async function attachPaymentLink(order, settings) {
+  if (paypalConfigured(paypalCredentials())) {
+    const paypalOrder = await createPayPalOrder({
+      publicId: order.publicId,
+      totalUsd: order.totalUsd,
+      description: `${order.publicId} CardanoMix ADA order`,
+      returnUrl: settings.paypalReturnUrl,
+      cancelUrl: settings.paypalCancelUrl,
+      credentials: paypalCredentials()
+    });
+    return updateOrder(order.id, () => ({
+      paypalOrderId: paypalOrder.id,
+      paymentUrl: paypalOrder.approvalUrl,
+      paymentProvider: "paypal",
+      paymentStatus: paypalOrder.status
+    }));
+  }
+
+  if (settings.paypalFallbackUrl) {
+    return updateOrder(order.id, () => ({
+      paymentUrl: settings.paypalFallbackUrl,
+      paymentProvider: "paypal-link",
+      paymentStatus: "manual-link"
+    }));
+  }
+
+  return order;
 }
 
 function routePath(request) {
@@ -329,7 +436,8 @@ async function handle(request, context) {
       ok: true,
       database: "netlify-blobs",
       adminConfigured: Boolean(env("ADMIN_EMAIL") && env("ADMIN_PASSWORD")),
-      quoteCurrency: env("ADA_QUOTE_CURRENCY", "EUR")
+      quoteCurrency: env("ADA_QUOTE_CURRENCY", "USD"),
+      paypalConfigured: paypalConfigured(paypalCredentials())
     });
   }
 
@@ -340,9 +448,20 @@ async function handle(request, context) {
   if (request.method === "GET" && path === "/api/price/ada") {
     return json({
       price: await fetchAdaPrice({
-        quoteCurrency: env("ADA_QUOTE_CURRENCY", "EUR"),
+        quoteCurrency: env("ADA_QUOTE_CURRENCY", "USD"),
         baseUrl: env("BINANCE_API_BASE")
       })
+    });
+  }
+
+  if (request.method === "GET" && path === "/api/settings") {
+    const settings = await readSettings();
+    return json({
+      settings: {
+        paypalFallbackUrl: settings.paypalFallbackUrl,
+        autoRedirectPayPal: settings.autoRedirectPayPal
+      },
+      paypalConfigured: paypalConfigured(paypalCredentials())
     });
   }
 
@@ -351,21 +470,21 @@ async function handle(request, context) {
   }
 
   if (request.method === "POST" && path === "/api/auth/register") {
-    const payload = authSchema.parse(await request.json());
+    const payload = authSchema.pick({ walletAddress: true, password: true, name: true }).parse(await request.json());
     const created = await createUser({
-      email: payload.email,
+      walletAddress: payload.walletAddress,
       passwordHash: await bcrypt.hash(payload.password, 12),
-      name: payload.name || payload.email.split("@")[0],
+      name: payload.name || "Wallet customer",
       role: "user"
     });
     return json({ user: publicUser(created) }, 201, { "Set-Cookie": sessionCookie(signSession(created)) });
   }
 
   if (request.method === "POST" && path === "/api/auth/login") {
-    const payload = authSchema.pick({ email: true, password: true }).parse(await request.json());
-    const found = await findUserByEmail(payload.email);
+    const payload = authSchema.pick({ walletAddress: true, password: true }).parse(await request.json());
+    const found = await findUserByWallet(payload.walletAddress);
     if (!found || found.role === "admin" || !(await bcrypt.compare(payload.password, found.passwordHash))) {
-      return json({ error: "Invalid email or password" }, 401);
+      return json({ error: "Invalid wallet or password" }, 401);
     }
     return json({ user: publicUser(found) }, 200, { "Set-Cookie": sessionCookie(signSession(found)) });
   }
@@ -388,23 +507,55 @@ async function handle(request, context) {
     requireUser(user);
     const payload = orderSchema.parse(await request.json());
     const items = calculateOrderItems(payload.items);
-    const totalEur = Number(items.reduce((sum, item) => sum + item.totalEur, 0).toFixed(2));
+    const totalUsd = Number(items.reduce((sum, item) => sum + item.totalUsd, 0).toFixed(2));
     const price = await fetchAdaPrice({
-      quoteCurrency: env("ADA_QUOTE_CURRENCY", "EUR"),
+      quoteCurrency: env("ADA_QUOTE_CURRENCY", "USD"),
       baseUrl: env("BINANCE_API_BASE")
     });
     const order = await createOrder({
+      type: "voucher",
       userId: user.id,
       customer: {
         name: user.name,
-        email: user.email
+        walletAddress: user.walletAddress
       },
       items,
-      totalEur,
-      adaAmount: quoteAdaAmount(totalEur, price.price),
+      totalUsd,
+      adaAmount: quoteAdaAmount(totalUsd, price.price),
       price
     });
-    return json({ order }, 201);
+    return json({ order: await attachPaymentLink(order, await readSettings()) }, 201);
+  }
+
+  if (request.method === "POST" && path === "/api/orders/custom") {
+    requireUser(user);
+    const payload = customAdaOrderSchema.parse(await request.json());
+    const price = await fetchAdaPrice({
+      quoteCurrency: env("ADA_QUOTE_CURRENCY", "USD"),
+      baseUrl: env("BINANCE_API_BASE")
+    });
+    const totalUsd = Number((payload.adaAmount * price.price).toFixed(2));
+    const order = await createOrder({
+      type: "custom-ada",
+      userId: user.id,
+      customer: {
+        name: user.name,
+        walletAddress: user.walletAddress
+      },
+      items: [
+        {
+          productId: "custom-ada",
+          name: "Custom ADA buy",
+          quantity: 1,
+          unitPriceUsd: totalUsd,
+          totalUsd
+        }
+      ],
+      totalUsd,
+      adaAmount: Number(payload.adaAmount.toFixed(6)),
+      price
+    });
+    return json({ order: await attachPaymentLink(order, await readSettings()) }, 201);
   }
 
   if (request.method === "GET" && path === "/api/orders/my") {
@@ -417,7 +568,8 @@ async function handle(request, context) {
     requireAdmin(user);
     return json({
       summary: await summarizeOrders(),
-      database: "netlify-blobs"
+      database: "netlify-blobs",
+      paypalConfigured: paypalConfigured(paypalCredentials())
     });
   }
 
@@ -426,12 +578,32 @@ async function handle(request, context) {
     return json({ orders: await readOrders() });
   }
 
+  if (request.method === "GET" && path === "/api/admin/settings") {
+    requireAdmin(user);
+    return json({
+      settings: await readSettings(),
+      paypalConfigured: paypalConfigured(paypalCredentials())
+    });
+  }
+
+  if (request.method === "PATCH" && path === "/api/admin/settings") {
+    requireAdmin(user);
+    const payload = settingsSchema.parse(await request.json());
+    return json({ settings: await writeSettings(payload) });
+  }
+
   if (request.method === "PATCH" && path.startsWith("/api/admin/orders/")) {
     requireAdmin(user);
     const orderId = context.params?.orderId || path.split("/").pop();
     const payload = statusSchema.parse(await request.json());
     const order = await updateOrder(orderId, () => ({ status: payload.status }));
     return json({ order });
+  }
+
+  if (request.method === "DELETE" && path.startsWith("/api/admin/orders/")) {
+    requireAdmin(user);
+    const orderId = context.params?.orderId || path.split("/").pop();
+    return json(await deleteOrder(orderId));
   }
 
   return json({ error: "Not found" }, 404);
@@ -451,15 +623,18 @@ export const config = {
     "/api/health",
     "/api/products",
     "/api/price/ada",
+    "/api/settings",
     "/api/auth/me",
     "/api/auth/register",
     "/api/auth/login",
     "/api/admin/login",
     "/api/auth/logout",
     "/api/orders",
+    "/api/orders/custom",
     "/api/orders/my",
     "/api/admin/summary",
     "/api/admin/orders",
+    "/api/admin/settings",
     "/api/admin/orders/:orderId"
   ]
 };

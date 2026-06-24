@@ -7,12 +7,12 @@ const DEFAULT_BASES = [
   "https://api4.binance.com"
 ];
 
-export function buildAdaTickerSymbol(quoteCurrency = "EUR") {
-  const quote = String(quoteCurrency || "EUR").trim().toUpperCase();
+export function buildAdaTickerSymbol(quoteCurrency = "USD") {
+  const quote = String(quoteCurrency || "USD").trim().toUpperCase();
   if (!/^[A-Z0-9]{3,10}$/.test(quote)) {
     throw new Error("Invalid Binance quote currency");
   }
-  return `ADA${quote}`;
+  return `ADA${quote === "USD" ? "USDT" : quote}`;
 }
 
 function unique(values) {
@@ -28,7 +28,7 @@ function endpointCandidates(options = {}) {
 }
 
 export async function fetchAdaPrice(options = {}) {
-  const quoteCurrency = options.quoteCurrency || process.env.ADA_QUOTE_CURRENCY || "EUR";
+  const quoteCurrency = options.quoteCurrency || process.env.ADA_QUOTE_CURRENCY || "USD";
   const symbol = buildAdaTickerSymbol(quoteCurrency);
   const timeoutMs = options.timeoutMs || 7000;
   const errors = [];

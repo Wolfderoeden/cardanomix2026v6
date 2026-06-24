@@ -52,15 +52,31 @@ export async function findUserByEmail(email) {
   return users.find((user) => user.email === normalized) || null;
 }
 
+export function normalizeWalletAddress(walletAddress) {
+  return String(walletAddress || "").trim();
+}
+
+export async function findUserByWallet(walletAddress) {
+  const normalized = normalizeWalletAddress(walletAddress);
+  const users = await readUsers();
+  return users.find((user) => user.walletAddress === normalized) || null;
+}
+
 export async function findUserById(userId) {
   const users = await readUsers();
   return users.find((user) => user.id === userId) || null;
 }
 
-export async function createUser({ email, passwordHash, name, role = "user" }) {
+export async function createUser({ email, walletAddress, passwordHash, name, role = "user" }) {
   const users = await readUsers();
-  const normalized = String(email).trim().toLowerCase();
-  if (users.some((user) => user.email === normalized)) {
+  const normalizedEmail = email ? String(email).trim().toLowerCase() : null;
+  const normalizedWallet = normalizeWalletAddress(walletAddress);
+  if (role === "user" && users.some((user) => user.walletAddress === normalizedWallet)) {
+    const error = new Error("Wallet already exists");
+    error.status = 409;
+    throw error;
+  }
+  if (normalizedEmail && users.some((user) => user.email === normalizedEmail)) {
     const error = new Error("Email already exists");
     error.status = 409;
     throw error;
@@ -69,9 +85,10 @@ export async function createUser({ email, passwordHash, name, role = "user" }) {
   const now = new Date().toISOString();
   const user = {
     id: randomUUID(),
-    email: normalized,
+    email: normalizedEmail,
+    walletAddress: normalizedWallet || null,
     passwordHash,
-    name: String(name || normalized.split("@")[0]).trim(),
+    name: String(name || normalizedWallet || normalizedEmail?.split("@")[0] || "Customer").trim(),
     role,
     createdAt: now,
     updatedAt: now
@@ -145,15 +162,55 @@ export async function updateOrder(orderId, updater) {
   return orders[index];
 }
 
+export async function deleteOrder(orderId) {
+  const orders = await readOrders();
+  const nextOrders = orders.filter((order) => order.id !== orderId);
+  if (nextOrders.length === orders.length) {
+    const error = new Error("Order not found");
+    error.status = 404;
+    throw error;
+  }
+  await writeOrders(nextOrders);
+  return { ok: true };
+}
+
+export function defaultSettings() {
+  return {
+    paypalReturnUrl: process.env.PAYPAL_RETURN_URL || "https://cardanomix2026.netlify.app/",
+    paypalCancelUrl: process.env.PAYPAL_CANCEL_URL || "https://cardanomix2026.netlify.app/",
+    paypalFallbackUrl: process.env.PAYPAL_FALLBACK_URL || "",
+    autoRedirectPayPal: false
+  };
+}
+
+export async function readSettings() {
+  return {
+    ...defaultSettings(),
+    ...(await readJsonFile("settings.json", {}))
+  };
+}
+
+export async function writeSettings(settings) {
+  const nextSettings = {
+    ...defaultSettings(),
+    paypalReturnUrl: String(settings.paypalReturnUrl || "").trim(),
+    paypalCancelUrl: String(settings.paypalCancelUrl || "").trim(),
+    paypalFallbackUrl: String(settings.paypalFallbackUrl || "").trim(),
+    autoRedirectPayPal: Boolean(settings.autoRedirectPayPal)
+  };
+  await writeJsonFile("settings.json", nextSettings);
+  return nextSettings;
+}
+
 export async function summarizeOrders() {
   const orders = await readOrders();
-  const revenueEur = orders.reduce((sum, order) => sum + Number(order.totalEur || 0), 0);
+  const revenueUsd = orders.reduce((sum, order) => sum + Number(order.totalUsd ?? order.totalEur ?? 0), 0);
   const adaQuoted = orders.reduce((sum, order) => sum + Number(order.adaAmount || 0), 0);
   const pending = orders.filter((order) => order.status !== "completed").length;
 
   return {
     orderCount: orders.length,
-    revenueEur,
+    revenueUsd,
     adaQuoted,
     pending
   };
@@ -166,6 +223,7 @@ export function toPublicUser(user) {
   return {
     id: user.id,
     email: user.email,
+    walletAddress: user.walletAddress,
     name: user.name,
     role: user.role,
     createdAt: user.createdAt

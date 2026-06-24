@@ -5,6 +5,7 @@ import { findUserById, toPublicUser } from "./store.js";
 
 export const authSchema = z.object({
   email: z.string().email().transform((value) => value.toLowerCase()),
+  walletAddress: z.string().trim().min(24).max(160),
   password: z.string().min(10).max(160),
   name: z.string().trim().min(2).max(80).optional()
 });
@@ -32,7 +33,8 @@ export function signSession(user) {
     {
       sub: user.id,
       role: user.role,
-      email: user.email
+      email: user.email,
+      walletAddress: user.walletAddress
     },
     getSessionSecret(),
     {

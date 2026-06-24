@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { buildAdaTickerSymbol, quoteAdaAmount } from "../server/lib/binance.js";
 
 test("builds a Binance ADA ticker symbol", () => {
+  assert.equal(buildAdaTickerSymbol(), "ADAUSDT");
+  assert.equal(buildAdaTickerSymbol("usd"), "ADAUSDT");
   assert.equal(buildAdaTickerSymbol("eur"), "ADAEUR");
   assert.equal(buildAdaTickerSymbol("USDT"), "ADAUSDT");
 });

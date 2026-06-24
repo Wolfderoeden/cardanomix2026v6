@@ -22,11 +22,14 @@ test("netlify api exposes products for the storefront", async () => {
   const body = await readJson(response);
 
   assert.equal(response.status, 200);
-  assert.equal(body.products.length, 3);
+  assert.equal(body.products.length, 4);
+  assert.ok(body.products.some((product) => product.priceUsd === 50));
 });
 
 test("netlify function is bound to admin and api routes", () => {
   assert.ok(config.path.includes("/api/price/ada"));
+  assert.ok(config.path.includes("/api/orders/custom"));
   assert.ok(config.path.includes("/api/admin/login"));
+  assert.ok(config.path.includes("/api/admin/settings"));
   assert.ok(config.path.includes("/api/admin/orders/:orderId"));
 });

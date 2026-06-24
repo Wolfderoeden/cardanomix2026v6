@@ -19,15 +19,20 @@ import {
   verifyPassword
 } from "./lib/auth.js";
 import { fetchAdaPrice, quoteAdaAmount } from "./lib/binance.js";
+import { createPayPalOrder, paypalConfigured } from "./lib/paypal.js";
 import { findProduct, PRODUCTS } from "./lib/products.js";
 import {
   createOrder,
   createUser,
+  deleteOrder,
   findUserByEmail,
+  findUserByWallet,
+  readSettings,
   readOrders,
   summarizeOrders,
   toPublicUser,
-  updateOrder
+  updateOrder,
+  writeSettings
 } from "./lib/store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -46,6 +51,17 @@ const orderSchema = z.object({
     .max(12)
 });
 
+const customAdaOrderSchema = z.object({
+  adaAmount: z.number().positive().max(100000)
+});
+
+const settingsSchema = z.object({
+  paypalReturnUrl: z.string().url().or(z.literal("")),
+  paypalCancelUrl: z.string().url().or(z.literal("")),
+  paypalFallbackUrl: z.string().url().or(z.literal("")),
+  autoRedirectPayPal: z.boolean().optional()
+});
+
 const statusSchema = z.object({
   status: z.enum(["new", "reviewing", "completed", "cancelled"])
 });
@@ -62,10 +78,48 @@ function calculateOrderItems(inputItems) {
       productId: product.id,
       name: product.name,
       quantity: input.quantity,
-      unitPriceEur: product.priceEur,
-      totalEur: Number((product.priceEur * input.quantity).toFixed(2))
+      unitPriceUsd: product.priceUsd,
+      totalUsd: Number((product.priceUsd * input.quantity).toFixed(2))
     };
   });
+}
+
+function paypalCredentials() {
+  return {
+    clientId: process.env.PAYPAL_CLIENT_ID,
+    clientSecret: process.env.PAYPAL_CLIENT_SECRET,
+    paypalEnv: process.env.PAYPAL_ENV,
+    baseUrl: process.env.PAYPAL_API_BASE
+  };
+}
+
+async function attachPaymentLink(order, settings) {
+  if (paypalConfigured(paypalCredentials())) {
+    const paypalOrder = await createPayPalOrder({
+      publicId: order.publicId,
+      totalUsd: order.totalUsd,
+      description: `${order.publicId} CardanoMix ADA order`,
+      returnUrl: settings.paypalReturnUrl,
+      cancelUrl: settings.paypalCancelUrl,
+      credentials: paypalCredentials()
+    });
+    return updateOrder(order.id, () => ({
+      paypalOrderId: paypalOrder.id,
+      paymentUrl: paypalOrder.approvalUrl,
+      paymentProvider: "paypal",
+      paymentStatus: paypalOrder.status
+    }));
+  }
+
+  if (settings.paypalFallbackUrl) {
+    return updateOrder(order.id, () => ({
+      paymentUrl: settings.paypalFallbackUrl,
+      paymentProvider: "paypal-link",
+      paymentStatus: "manual-link"
+    }));
+  }
+
+  return order;
 }
 
 function normalizeError(error) {
@@ -110,7 +164,8 @@ export function createApp() {
     res.json({
       ok: true,
       database: "local-json",
-      quoteCurrency: process.env.ADA_QUOTE_CURRENCY || "EUR"
+      quoteCurrency: process.env.ADA_QUOTE_CURRENCY || "USD",
+      paypalConfigured: paypalConfigured(paypalCredentials())
     });
   });
 
@@ -126,17 +181,32 @@ export function createApp() {
     }
   });
 
+  app.get("/api/settings", async (_req, res, next) => {
+    try {
+      const settings = await readSettings();
+      res.json({
+        settings: {
+          paypalFallbackUrl: settings.paypalFallbackUrl,
+          autoRedirectPayPal: settings.autoRedirectPayPal
+        },
+        paypalConfigured: paypalConfigured(paypalCredentials())
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/api/auth/me", (req, res) => {
     res.json({ user: toPublicUser(req.user) });
   });
 
   app.post("/api/auth/register", authLimiter, async (req, res, next) => {
     try {
-      const payload = authSchema.parse(req.body);
+      const payload = authSchema.pick({ walletAddress: true, password: true, name: true }).parse(req.body);
       const user = await createUser({
-        email: payload.email,
+        walletAddress: payload.walletAddress,
         passwordHash: await hashPassword(payload.password),
-        name: payload.name || payload.email.split("@")[0],
+        name: payload.name || "Wallet customer",
         role: "user"
       });
       setSessionCookie(res, signSession(user));
@@ -148,10 +218,10 @@ export function createApp() {
 
   app.post("/api/auth/login", authLimiter, async (req, res, next) => {
     try {
-      const payload = authSchema.pick({ email: true, password: true }).parse(req.body);
-      const user = await findUserByEmail(payload.email);
+      const payload = authSchema.pick({ walletAddress: true, password: true }).parse(req.body);
+      const user = await findUserByWallet(payload.walletAddress);
       if (!user || user.role === "admin" || !(await verifyPassword(payload.password, user.passwordHash))) {
-        return res.status(401).json({ error: "Invalid email or password" });
+        return res.status(401).json({ error: "Invalid wallet or password" });
       }
       setSessionCookie(res, signSession(user));
       res.json(authResponse(user));
@@ -183,21 +253,55 @@ export function createApp() {
     try {
       const payload = orderSchema.parse(req.body);
       const items = calculateOrderItems(payload.items);
-      const totalEur = Number(items.reduce((sum, item) => sum + item.totalEur, 0).toFixed(2));
+      const totalUsd = Number(items.reduce((sum, item) => sum + item.totalUsd, 0).toFixed(2));
       const price = await fetchAdaPrice();
-      const adaAmount = quoteAdaAmount(totalEur, price.price);
+      const adaAmount = quoteAdaAmount(totalUsd, price.price);
       const order = await createOrder({
+        type: "voucher",
         userId: req.user.id,
         customer: {
           name: req.user.name,
-          email: req.user.email
+          walletAddress: req.user.walletAddress
         },
         items,
-        totalEur,
+        totalUsd,
         adaAmount,
         price
       });
-      res.status(201).json({ order });
+      const orderWithPayment = await attachPaymentLink(order, await readSettings());
+      res.status(201).json({ order: orderWithPayment });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/orders/custom", requireUser, async (req, res, next) => {
+    try {
+      const payload = customAdaOrderSchema.parse(req.body);
+      const price = await fetchAdaPrice();
+      const totalUsd = Number((payload.adaAmount * price.price).toFixed(2));
+      const order = await createOrder({
+        type: "custom-ada",
+        userId: req.user.id,
+        customer: {
+          name: req.user.name,
+          walletAddress: req.user.walletAddress
+        },
+        items: [
+          {
+            productId: "custom-ada",
+            name: "Custom ADA buy",
+            quantity: 1,
+            unitPriceUsd: totalUsd,
+            totalUsd
+          }
+        ],
+        totalUsd,
+        adaAmount: Number(payload.adaAmount.toFixed(6)),
+        price
+      });
+      const orderWithPayment = await attachPaymentLink(order, await readSettings());
+      res.status(201).json({ order: orderWithPayment });
     } catch (error) {
       next(error);
     }
@@ -216,7 +320,8 @@ export function createApp() {
     try {
       res.json({
         summary: await summarizeOrders(),
-        database: "local-json"
+        database: "local-json",
+        paypalConfigured: paypalConfigured(paypalCredentials())
       });
     } catch (error) {
       next(error);
@@ -231,11 +336,39 @@ export function createApp() {
     }
   });
 
+  app.get("/api/admin/settings", requireAdmin, async (_req, res, next) => {
+    try {
+      res.json({
+        settings: await readSettings(),
+        paypalConfigured: paypalConfigured(paypalCredentials())
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/admin/settings", requireAdmin, async (req, res, next) => {
+    try {
+      const payload = settingsSchema.parse(req.body);
+      res.json({ settings: await writeSettings(payload) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.patch("/api/admin/orders/:orderId", requireAdmin, async (req, res, next) => {
     try {
       const payload = statusSchema.parse(req.body);
       const order = await updateOrder(req.params.orderId, () => ({ status: payload.status }));
       res.json({ order });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/admin/orders/:orderId", requireAdmin, async (req, res, next) => {
+    try {
+      res.json(await deleteOrder(req.params.orderId));
     } catch (error) {
       next(error);
     }
