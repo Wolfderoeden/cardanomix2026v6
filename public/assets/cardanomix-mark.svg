@@ -1,0 +1,14 @@
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="CardanoMix mark">
+  <rect width="120" height="120" rx="26" fill="#07111E"/>
+  <circle cx="60" cy="60" r="34" stroke="#D7F7FF" stroke-width="2"/>
+  <circle cx="60" cy="60" r="6" fill="#9BE7D6"/>
+  <circle cx="60" cy="28" r="4" fill="#7CC7FF"/>
+  <circle cx="60" cy="92" r="4" fill="#7CC7FF"/>
+  <circle cx="28" cy="60" r="4" fill="#7CC7FF"/>
+  <circle cx="92" cy="60" r="4" fill="#7CC7FF"/>
+  <circle cx="37.5" cy="37.5" r="3.5" fill="#EAC46A"/>
+  <circle cx="82.5" cy="37.5" r="3.5" fill="#EAC46A"/>
+  <circle cx="37.5" cy="82.5" r="3.5" fill="#EAC46A"/>
+  <circle cx="82.5" cy="82.5" r="3.5" fill="#EAC46A"/>
+  <path d="M60 28V92M28 60H92M37.5 37.5L82.5 82.5M82.5 37.5L37.5 82.5" stroke="#D7F7FF" stroke-width="1.4" stroke-linecap="round" opacity=".55"/>
+</svg>
