@@ -51,7 +51,7 @@ https://cardanomix.com/admin
 
 ## Binance settings
 
-The app requests `https://api.binance.com/api/v3/ticker/price?symbol=ADAEUR` by default. Change `ADA_QUOTE_CURRENCY` if you want another Binance quote currency.
+The app requests Binance market data from `https://data-api.binance.vision/api/v3/ticker/price?symbol=ADAEUR` first, then falls back to other Binance public endpoints. Change `ADA_QUOTE_CURRENCY` if you want another Binance quote currency.
 
 ## Checks
 

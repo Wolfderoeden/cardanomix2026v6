@@ -341,7 +341,7 @@ async function handle(request, context) {
     return json({
       price: await fetchAdaPrice({
         quoteCurrency: env("ADA_QUOTE_CURRENCY", "EUR"),
-        baseUrl: env("BINANCE_API_BASE", "https://api.binance.com")
+        baseUrl: env("BINANCE_API_BASE")
       })
     });
   }
@@ -391,7 +391,7 @@ async function handle(request, context) {
     const totalEur = Number(items.reduce((sum, item) => sum + item.totalEur, 0).toFixed(2));
     const price = await fetchAdaPrice({
       quoteCurrency: env("ADA_QUOTE_CURRENCY", "EUR"),
-      baseUrl: env("BINANCE_API_BASE", "https://api.binance.com")
+      baseUrl: env("BINANCE_API_BASE")
     });
     const order = await createOrder({
       userId: user.id,
