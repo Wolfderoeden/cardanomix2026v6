@@ -179,6 +179,8 @@ export function defaultSettings() {
     paypalReturnUrl: process.env.PAYPAL_RETURN_URL || "https://cardanomix2026.netlify.app/",
     paypalCancelUrl: process.env.PAYPAL_CANCEL_URL || "https://cardanomix2026.netlify.app/",
     paypalFallbackUrl: process.env.PAYPAL_FALLBACK_URL || "",
+    customAdaPayPalLink: process.env.PAYPAL_CUSTOM_ADA_LINK || "",
+    productPayPalLinks: {},
     autoRedirectPayPal: false
   };
 }
@@ -196,6 +198,10 @@ export async function writeSettings(settings) {
     paypalReturnUrl: String(settings.paypalReturnUrl || "").trim(),
     paypalCancelUrl: String(settings.paypalCancelUrl || "").trim(),
     paypalFallbackUrl: String(settings.paypalFallbackUrl || "").trim(),
+    customAdaPayPalLink: String(settings.customAdaPayPalLink || "").trim(),
+    productPayPalLinks: Object.fromEntries(
+      Object.entries(settings.productPayPalLinks || {}).map(([key, value]) => [key, String(value || "").trim()])
+    ),
     autoRedirectPayPal: Boolean(settings.autoRedirectPayPal)
   };
   await writeJsonFile("settings.json", nextSettings);

@@ -127,6 +127,14 @@ a {
   min-height: 42px;
 }
 
+.segmented.full {
+  width: 100%;
+}
+
+.segmented.full button {
+  flex: 1;
+}
+
 .segmented button,
 .ghost-button,
 .text-button,
@@ -138,6 +146,25 @@ a {
   border: 0;
   color: var(--text);
   background: transparent;
+}
+
+.profile-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(440px, 55vw);
+  min-height: 40px;
+  padding: 4px 6px 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.profile-chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .segmented button {
@@ -376,7 +403,6 @@ h1 {
 
 .stepper {
   display: grid;
-  grid-template-columns: 42px 1fr 42px;
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
@@ -387,13 +413,13 @@ h1 {
   border: 0;
   background: var(--surface-2);
   color: var(--text);
-  font-size: 1.2rem;
+  font-size: 0.92rem;
+  font-weight: 900;
 }
 
-.stepper output {
-  display: grid;
-  place-items: center;
-  font-weight: 900;
+.stepper button.selected {
+  background: var(--text);
+  color: var(--bg);
 }
 
 .cart-panel {
@@ -449,6 +475,10 @@ h1 {
 
 .quote-total strong {
   font-size: 1.8rem;
+}
+
+.quote-total.ada-focus strong {
+  font-size: 2.05rem;
 }
 
 .auth-panel {
@@ -651,7 +681,7 @@ input[type="checkbox"] {
 
 .status-cell {
   display: grid;
-  grid-template-columns: minmax(100px, 1fr) minmax(116px, 1fr) 34px 34px;
+  grid-template-columns: minmax(100px, 1fr) minmax(116px, 1fr) 34px 34px 34px;
   gap: 8px;
   align-items: center;
 }
@@ -660,6 +690,31 @@ input[type="checkbox"] {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.wallet-note {
+  word-break: break-all;
+}
+
+.site-footer {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+  gap: 22px;
+  padding: 26px clamp(18px, 4vw, 52px) 42px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 76%, var(--bg));
+}
+
+.legal-copy {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  line-height: 1.55;
+  font-size: 0.9rem;
+}
+
+.legal-copy strong {
+  color: var(--text);
 }
 
 .icon-button.danger {
@@ -721,7 +776,8 @@ input[type="checkbox"] {
   }
 
   .topbar nav,
-  .segmented {
+  .segmented,
+  .profile-chip {
     width: 100%;
   }
 
@@ -753,5 +809,9 @@ input[type="checkbox"] {
   .admin-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .site-footer {
+    grid-template-columns: 1fr;
   }
 }

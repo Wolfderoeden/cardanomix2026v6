@@ -44,11 +44,11 @@ const orderSchema = z.object({
     .array(
       z.object({
         productId: z.string().min(1),
-        quantity: z.number().int().min(1).max(20)
+        quantity: z.number().int().min(1).max(1)
       })
     )
     .min(1)
-    .max(12)
+    .max(1)
 });
 
 const customAdaOrderSchema = z.object({
@@ -59,6 +59,8 @@ const settingsSchema = z.object({
   paypalReturnUrl: z.string().url().or(z.literal("")),
   paypalCancelUrl: z.string().url().or(z.literal("")),
   paypalFallbackUrl: z.string().url().or(z.literal("")),
+  customAdaPayPalLink: z.string().url().or(z.literal("")),
+  productPayPalLinks: z.record(z.string(), z.string().url().or(z.literal(""))).optional(),
   autoRedirectPayPal: z.boolean().optional()
 });
 
@@ -94,6 +96,10 @@ function paypalCredentials() {
 }
 
 async function attachPaymentLink(order, settings) {
+  const productId = order.items?.[0]?.productId;
+  const manualProductLink = order.type === "voucher" ? settings.productPayPalLinks?.[productId] : "";
+  const manualCustomLink = order.type === "custom-ada" ? settings.customAdaPayPalLink : "";
+
   if (paypalConfigured(paypalCredentials())) {
     const paypalOrder = await createPayPalOrder({
       publicId: order.publicId,
@@ -111,9 +117,10 @@ async function attachPaymentLink(order, settings) {
     }));
   }
 
-  if (settings.paypalFallbackUrl) {
+  const manualLink = manualProductLink || manualCustomLink || settings.paypalFallbackUrl;
+  if (manualLink) {
     return updateOrder(order.id, () => ({
-      paymentUrl: settings.paypalFallbackUrl,
+      paymentUrl: manualLink,
       paymentProvider: "paypal-link",
       paymentStatus: "manual-link"
     }));
@@ -187,6 +194,8 @@ export function createApp() {
       res.json({
         settings: {
           paypalFallbackUrl: settings.paypalFallbackUrl,
+          customAdaPayPalLink: settings.customAdaPayPalLink,
+          productPayPalLinks: settings.productPayPalLinks,
           autoRedirectPayPal: settings.autoRedirectPayPal
         },
         paypalConfigured: paypalConfigured(paypalCredentials())

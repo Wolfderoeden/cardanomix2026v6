@@ -8,8 +8,9 @@ Modern ADA voucher storefront with a separate admin dashboard, direct website us
 - Website-native customer registration and login with Cardano wallet addresses. No ChatGPT auth is used.
 - Admin login via email and password only.
 - Live ADA/USD pricing from Binance on every price request and every order quote.
-- Fixed voucher denominations plus custom ADA amount checkout.
-- PayPal Checkout order links with editable return/cancel/fallback routing in admin.
+- Fixed voucher denominations plus custom ADA amount checkout; only one voucher can be bought per payment.
+- PayPal Checkout order links with editable return/cancel/fallback routing and per-buy-button PayPal fallback links in admin.
+- Admin payment sync marks PayPal orders as paid/reviewing and cancels unpaid orders after 10 minutes when checked.
 - Admin order delete and Excel-compatible CSV export.
 - Admin order review without Gmail side effects.
 - HttpOnly session cookies, password hashing, rate limiting, and server-side order totals.
@@ -66,6 +67,7 @@ PAYPAL_CLIENT_ID=your-client-id
 PAYPAL_CLIENT_SECRET=your-client-secret
 PAYPAL_RETURN_URL=https://cardanomix2026.netlify.app/
 PAYPAL_CANCEL_URL=https://cardanomix2026.netlify.app/
+PAYPAL_CUSTOM_ADA_LINK=
 ```
 
 The admin dashboard can edit return, cancel, and fallback PayPal links stored in Netlify Blobs.

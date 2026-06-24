@@ -1,14 +1,5 @@
 export const PRODUCTS = [
   {
-    id: "ada-signal-25",
-    name: "Signal Voucher",
-    priceUsd: 25,
-    tier: "Starter",
-    tone: "teal",
-    description: "A clean entry voucher for a first ADA allocation.",
-    settlement: "Instant order review"
-  },
-  {
     id: "ada-bridge-50",
     name: "Bridge Voucher",
     priceUsd: 50,

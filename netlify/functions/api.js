@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 import { getStore } from "@netlify/blobs";
 import { z } from "zod";
 import { fetchAdaPrice, quoteAdaAmount } from "../../server/lib/binance.js";
-import { createPayPalOrder, paypalConfigured } from "../../server/lib/paypal.js";
+import { createPayPalOrder, getPayPalOrder, paypalConfigured } from "../../server/lib/paypal.js";
 import { findProduct, PRODUCTS } from "../../server/lib/products.js";
 
 const SESSION_COOKIE = "cardanomix_session";
@@ -24,11 +24,11 @@ const orderSchema = z.object({
     .array(
       z.object({
         productId: z.string().min(1),
-        quantity: z.number().int().min(1).max(20)
+        quantity: z.number().int().min(1).max(1)
       })
     )
     .min(1)
-    .max(12)
+    .max(1)
 });
 
 const statusSchema = z.object({
@@ -43,6 +43,8 @@ const settingsSchema = z.object({
   paypalReturnUrl: z.string().url().or(z.literal("")),
   paypalCancelUrl: z.string().url().or(z.literal("")),
   paypalFallbackUrl: z.string().url().or(z.literal("")),
+  customAdaPayPalLink: z.string().url().or(z.literal("")),
+  productPayPalLinks: z.record(z.string(), z.string().url().or(z.literal(""))).optional(),
   autoRedirectPayPal: z.boolean().optional()
 });
 
@@ -92,7 +94,7 @@ function signSession(user) {
     },
     sessionSecret(),
     {
-      expiresIn: "7d",
+      expiresIn: "30d",
       issuer: "cardanomix"
     }
   );
@@ -105,7 +107,7 @@ function sessionCookie(token) {
     "HttpOnly",
     "SameSite=Lax",
     "Secure",
-    "Max-Age=604800"
+    "Max-Age=2592000"
   ].join("; ");
 }
 
@@ -329,15 +331,21 @@ function defaultSettings() {
     paypalReturnUrl: env("PAYPAL_RETURN_URL", "https://cardanomix2026.netlify.app/"),
     paypalCancelUrl: env("PAYPAL_CANCEL_URL", "https://cardanomix2026.netlify.app/"),
     paypalFallbackUrl: env("PAYPAL_FALLBACK_URL", ""),
+    customAdaPayPalLink: env("PAYPAL_CUSTOM_ADA_LINK", ""),
+    productPayPalLinks: Object.fromEntries(PRODUCTS.map((product) => [product.id, ""])),
     autoRedirectPayPal: false
   };
 }
 
 async function readSettings() {
-  return {
-    ...defaultSettings(),
-    ...((await store().get(SETTINGS_KEY, { type: "json" })) || {})
-  };
+  try {
+    return {
+      ...defaultSettings(),
+      ...((await store().get(SETTINGS_KEY, { type: "json" })) || {})
+    };
+  } catch {
+    return defaultSettings();
+  }
 }
 
 async function writeSettings(settings) {
@@ -346,6 +354,10 @@ async function writeSettings(settings) {
     paypalReturnUrl: String(settings.paypalReturnUrl || "").trim(),
     paypalCancelUrl: String(settings.paypalCancelUrl || "").trim(),
     paypalFallbackUrl: String(settings.paypalFallbackUrl || "").trim(),
+    customAdaPayPalLink: String(settings.customAdaPayPalLink || "").trim(),
+    productPayPalLinks: Object.fromEntries(
+      PRODUCTS.map((product) => [product.id, String(settings.productPayPalLinks?.[product.id] || "").trim()])
+    ),
     autoRedirectPayPal: Boolean(settings.autoRedirectPayPal)
   };
   await store().setJSON(SETTINGS_KEY, nextSettings);
@@ -375,7 +387,71 @@ function paypalCredentials() {
   };
 }
 
+function paymentExpired(order) {
+  if (order.status === "completed" || order.status === "cancelled") {
+    return false;
+  }
+  return Date.now() - new Date(order.createdAt).getTime() > 10 * 60 * 1000;
+}
+
+async function syncPaymentState(order) {
+  if (order.status === "completed" || order.status === "cancelled") {
+    return order;
+  }
+
+  if (paypalConfigured(paypalCredentials()) && order.paypalOrderId) {
+    try {
+      const paypalOrder = await getPayPalOrder({
+        paypalOrderId: order.paypalOrderId,
+        credentials: paypalCredentials()
+      });
+      if (paypalOrder.status === "COMPLETED") {
+        return updateOrder(order.id, () => ({
+          status: "completed",
+          paymentStatus: paypalOrder.status,
+          paidAt: new Date().toISOString(),
+          payerEmail: paypalOrder.payerEmail
+        }));
+      }
+      if (paypalOrder.status === "APPROVED") {
+        return updateOrder(order.id, () => ({
+          status: "reviewing",
+          paymentStatus: paypalOrder.status
+        }));
+      }
+      order = await updateOrder(order.id, () => ({
+        paymentStatus: paypalOrder.status
+      }));
+    } catch {
+      // Keep local status if PayPal is temporarily unavailable; expiry still applies.
+    }
+  }
+
+  if (paymentExpired(order)) {
+    return updateOrder(order.id, () => ({
+      status: "cancelled",
+      paymentStatus: order.paymentStatus || "expired",
+      cancelledAt: new Date().toISOString(),
+      cancelReason: "No PayPal payment detected within 10 minutes"
+    }));
+  }
+
+  return order;
+}
+
+async function syncVisibleOrders(orders) {
+  const synced = [];
+  for (const order of orders) {
+    synced.push(await syncPaymentState(order));
+  }
+  return synced;
+}
+
 async function attachPaymentLink(order, settings) {
+  const productId = order.items?.[0]?.productId;
+  const manualProductLink = order.type === "voucher" ? settings.productPayPalLinks?.[productId] : "";
+  const manualCustomLink = order.type === "custom-ada" ? settings.customAdaPayPalLink : "";
+
   if (paypalConfigured(paypalCredentials())) {
     const paypalOrder = await createPayPalOrder({
       publicId: order.publicId,
@@ -393,9 +469,10 @@ async function attachPaymentLink(order, settings) {
     }));
   }
 
-  if (settings.paypalFallbackUrl) {
+  const manualLink = manualProductLink || manualCustomLink || settings.paypalFallbackUrl;
+  if (manualLink) {
     return updateOrder(order.id, () => ({
-      paymentUrl: settings.paypalFallbackUrl,
+      paymentUrl: manualLink,
       paymentProvider: "paypal-link",
       paymentStatus: "manual-link"
     }));
@@ -459,6 +536,8 @@ async function handle(request, context) {
     return json({
       settings: {
         paypalFallbackUrl: settings.paypalFallbackUrl,
+        customAdaPayPalLink: settings.customAdaPayPalLink,
+        productPayPalLinks: settings.productPayPalLinks,
         autoRedirectPayPal: settings.autoRedirectPayPal
       },
       paypalConfigured: paypalConfigured(paypalCredentials())
@@ -560,12 +639,13 @@ async function handle(request, context) {
 
   if (request.method === "GET" && path === "/api/orders/my") {
     requireUser(user);
-    const orders = (await readOrders()).filter((order) => order.userId === user.id);
+    const orders = await syncVisibleOrders((await readOrders()).filter((order) => order.userId === user.id));
     return json({ orders });
   }
 
   if (request.method === "GET" && path === "/api/admin/summary") {
     requireAdmin(user);
+    await syncVisibleOrders(await readOrders());
     return json({
       summary: await summarizeOrders(),
       database: "netlify-blobs",
@@ -575,7 +655,7 @@ async function handle(request, context) {
 
   if (request.method === "GET" && path === "/api/admin/orders") {
     requireAdmin(user);
-    return json({ orders: await readOrders() });
+    return json({ orders: await syncVisibleOrders(await readOrders()) });
   }
 
   if (request.method === "GET" && path === "/api/admin/settings") {
@@ -598,6 +678,16 @@ async function handle(request, context) {
     const payload = statusSchema.parse(await request.json());
     const order = await updateOrder(orderId, () => ({ status: payload.status }));
     return json({ order });
+  }
+
+  if (request.method === "POST" && path.endsWith("/sync") && path.startsWith("/api/admin/orders/")) {
+    requireAdmin(user);
+    const orderId = path.split("/").at(-2);
+    const order = (await readOrders()).find((candidate) => candidate.id === orderId);
+    if (!order) {
+      throw Object.assign(new Error("Order not found"), { status: 404 });
+    }
+    return json({ order: await syncPaymentState(order) });
   }
 
   if (request.method === "DELETE" && path.startsWith("/api/admin/orders/")) {
@@ -635,6 +725,7 @@ export const config = {
     "/api/admin/summary",
     "/api/admin/orders",
     "/api/admin/settings",
-    "/api/admin/orders/:orderId"
+    "/api/admin/orders/:orderId",
+    "/api/admin/orders/:orderId/sync"
   ]
 };

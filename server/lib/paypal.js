@@ -95,3 +95,33 @@ export async function createPayPalOrder({ publicId, totalUsd, description, retur
     approvalUrl
   };
 }
+
+export async function getPayPalOrder({ paypalOrderId, credentials = {} }) {
+  if (!paypalOrderId) {
+    const error = new Error("PayPal order id is required");
+    error.status = 400;
+    throw error;
+  }
+
+  const accessToken = await getAccessToken(credentials);
+  const response = await fetch(new URL(`/v2/checkout/orders/${paypalOrderId}`, paypalBaseUrl(credentials)), {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    const error = new Error(`PayPal order status request failed with ${response.status}`);
+    error.status = 502;
+    throw error;
+  }
+
+  const payload = await response.json();
+  return {
+    id: payload.id,
+    status: payload.status,
+    payerEmail: payload.payer?.email_address || null,
+    updatedAt: payload.update_time || new Date().toISOString()
+  };
+}

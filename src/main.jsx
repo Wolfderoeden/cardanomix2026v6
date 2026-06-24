@@ -226,12 +226,13 @@ function ProductCard({ product, adaPrice, quantity, setQuantity }) {
         </div>
       </div>
       <div className="stepper">
-        <button type="button" aria-label={`Decrease ${product.name}`} onClick={() => setQuantity(product.id, Math.max(0, quantity - 1))}>
-          -
-        </button>
-        <output>{quantity}</output>
-        <button type="button" aria-label={`Increase ${product.name}`} onClick={() => setQuantity(product.id, quantity + 1)}>
-          +
+        <button
+          className={quantity ? "selected" : ""}
+          type="button"
+          aria-label={`Select ${product.name}`}
+          onClick={() => setQuantity(product.id, quantity ? 0 : 1)}
+        >
+          {quantity ? "Selected" : "Select voucher"}
         </button>
       </div>
     </article>
@@ -240,6 +241,7 @@ function ProductCard({ product, adaPrice, quantity, setQuantity }) {
 
 function CartPanel({ products, cart, price, user, settings, setUser, setCart }) {
   const [authMode, setAuthMode] = useState("register");
+  const [orderMode, setOrderMode] = useState("voucher");
   const [orders, setOrders] = useState([]);
   const [customAda, setCustomAda] = useState("");
   const [paymentUrl, setPaymentUrl] = useState("");
@@ -314,7 +316,7 @@ function CartPanel({ products, cart, price, user, settings, setUser, setCart }) 
       });
       setStatus(`Order ${payload.order.publicId} received`);
       setPaymentUrl(payload.order.paymentUrl || "");
-      if (settings?.settings?.autoRedirectPayPal && payload.order.paymentUrl) {
+      if (payload.order.paymentUrl) {
         window.location.href = payload.order.paymentUrl;
       }
       setCustomAda("");
@@ -339,33 +341,62 @@ function CartPanel({ products, cart, price, user, settings, setUser, setCart }) 
         <span>Order desk</span>
       </div>
 
-      <div className="cart-lines">
-        {cartItems.length === 0 && <p className="muted">Select vouchers to build a live ADA quote.</p>}
-        {cartItems.map((item) => (
-          <div className="cart-line" key={item.id}>
-            <span>{item.quantity} x {item.name}</span>
-            <strong>{currency.format(item.lineTotal)}</strong>
-          </div>
-        ))}
+      <div className="segmented full" aria-label="Order type">
+        <button className={orderMode === "voucher" ? "active" : ""} type="button" onClick={() => setOrderMode("voucher")}>
+          Voucher
+        </button>
+        <button className={orderMode === "custom" ? "active" : ""} type="button" onClick={() => setOrderMode("custom")}>
+          Custom ADA
+        </button>
       </div>
 
-      <div className="quote-total">
-        <span>Total</span>
-        <strong>{currency.format(total)}</strong>
-        <small>{ada} ADA at Binance live price</small>
-      </div>
+      {orderMode === "voucher" && (
+        <div className="cart-lines">
+          {cartItems.length === 0 && <p className="muted">Select one voucher to build a live ADA quote.</p>}
+          {cartItems.map((item) => (
+            <div className="cart-line" key={item.id}>
+              <span>{item.name}</span>
+              <strong>{currency.format(item.lineTotal)}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {orderMode === "voucher" && (
+        <div className="quote-total ada-focus">
+          <span>ADA quote</span>
+          <strong>{ada} ADA</strong>
+          <small>{currency.format(total)} at Binance live price</small>
+        </div>
+      )}
+
+      {orderMode === "custom" && (
+        <div className="custom-buy-panel">
+          <div className="mini-heading">Custom ADA buy</div>
+          <label>
+            ADA amount
+            <input
+              type="number"
+              min="1"
+              step="0.000001"
+              value={customAda}
+              onChange={(event) => setCustomAda(event.target.value)}
+              placeholder="1000"
+            />
+          </label>
+          <div className="quote-total ada-focus">
+            <span>ADA quote</span>
+            <strong>{Number.isFinite(customAdaNumber) && customAdaNumber > 0 ? customAdaNumber.toFixed(6) : "0.000000"} ADA</strong>
+            <small>{currency.format(customUsd)} at Binance live price</small>
+          </div>
+        </div>
+      )}
 
       {!user ? (
         <AuthPanel mode={authMode} setMode={setAuthMode} onAuth={setUser} />
       ) : (
         <div className="signed-in">
-          <div className="signed-user">
-            <UserRound size={18} />
-            <span>{user.name}</span>
-            <button className="icon-button" type="button" onClick={logout} aria-label="Logout" title="Logout">
-              <LogOut size={15} />
-            </button>
-          </div>
+          <p className="muted wallet-note">{user.walletAddress}</p>
           {error && <p className="form-error">{error}</p>}
           {status && <p className="form-success">{status}</p>}
           {paymentUrl && (
@@ -374,40 +405,22 @@ function CartPanel({ products, cart, price, user, settings, setUser, setCart }) 
               Continue to PayPal
             </a>
           )}
-          <button className="primary-button" type="button" onClick={checkout} disabled={busy || cartItems.length === 0}>
-            <WalletCards size={17} />
-            {busy ? "Sending" : "Place order"}
-          </button>
+          {orderMode === "voucher" && (
+            <button className="primary-button" type="button" onClick={checkout} disabled={busy || cartItems.length === 0}>
+              <WalletCards size={17} />
+              {busy ? "Sending" : "Place order"}
+            </button>
+          )}
+          {orderMode === "custom" && (
+            <button className="primary-button" type="button" onClick={buyCustomAda} disabled={busy || customUsd <= 0}>
+              <ExternalLink size={17} />
+              Buy ADA with PayPal
+            </button>
+          )}
         </div>
       )}
 
-      <div className="custom-buy-panel">
-        <div className="mini-heading">Custom ADA buy</div>
-        <label>
-          ADA amount
-          <input
-            type="number"
-            min="1"
-            step="0.000001"
-            value={customAda}
-            onChange={(event) => setCustomAda(event.target.value)}
-            placeholder="1000"
-          />
-        </label>
-        <div className="quote-total compact">
-          <span>Live USD quote</span>
-          <strong>{currency.format(customUsd)}</strong>
-          <small>{price ? `${price.price.toFixed(4)} USD per ADA` : "Waiting for Binance"}</small>
-        </div>
-        {user ? (
-          <button className="primary-button" type="button" onClick={buyCustomAda} disabled={busy || customUsd <= 0}>
-            <ExternalLink size={17} />
-            Buy ADA with PayPal
-          </button>
-        ) : (
-          <p className="muted">Register with your wallet before buying a custom ADA amount.</p>
-        )}
-      </div>
+      {!user && orderMode === "custom" && <p className="muted">Register with your wallet before continuing to PayPal.</p>}
 
       {orders.length > 0 && (
         <div className="recent-orders">
@@ -429,10 +442,12 @@ function Storefront({ state, setState, refreshPrice }) {
   const [cart, setCart] = useState({});
 
   function setQuantity(productId, quantity) {
-    setCart((current) => ({
-      ...current,
-      [productId]: Math.min(20, Math.max(0, quantity))
-    }));
+    setCart(quantity > 0 ? { [productId]: 1 } : {});
+  }
+
+  async function logout() {
+    await api("/api/auth/logout", { method: "POST" });
+    setState((current) => ({ ...current, user: null }));
   }
 
   useEffect(() => {
@@ -444,8 +459,17 @@ function Storefront({ state, setState, refreshPrice }) {
       <header className="topbar">
         <Brand />
         <nav>
-          <a href="/admin">Admin</a>
-          <ThemeSwitch theme={theme} setTheme={setTheme} />
+          {state.user ? (
+            <div className="profile-chip">
+              <UserRound size={16} />
+              <span>{state.user.name}</span>
+              <button className="icon-button" type="button" onClick={logout} aria-label="Logout" title="Logout">
+                <LogOut size={15} />
+              </button>
+            </div>
+          ) : (
+            <span className="muted">Wallet checkout</span>
+          )}
         </nav>
       </header>
 
@@ -491,7 +515,28 @@ function Storefront({ state, setState, refreshPrice }) {
           setCart={setCart}
         />
       </main>
+      <Footer theme={theme} setTheme={setTheme} />
     </div>
+  );
+}
+
+function Footer({ theme, setTheme }) {
+  return (
+    <footer className="site-footer">
+      <ThemeSwitch theme={theme} setTheme={setTheme} />
+      <div className="legal-copy">
+        <strong>Terms, privacy, risk and liability notice</strong>
+        <p>
+          CardanoMix stores only the wallet/account and order data required for checkout, session security, payment reconciliation, and admin operations.
+          Data is not sold or used for advertising. PayPal processes payment data as the payment provider; Binance market data is used only for pricing.
+          Crypto assets and ADA pricing are volatile. The site admin does not provide financial advice, custody, investment guarantees, or loss coverage.
+          Users are responsible for wallet accuracy, payment confirmation, taxes, and local legal compliance.
+        </p>
+        <p>
+          Security posture follows data minimisation, purpose limitation, access control, secure cookies, hashed passwords, least-privilege secrets, and operational review patterns aligned with GDPR/DSGVO and modern ISMS/NIS2 risk-management expectations.
+        </p>
+      </div>
+    </footer>
   );
 }
 
@@ -572,7 +617,7 @@ function exportOrdersCsv(orders) {
   URL.revokeObjectURL(url);
 }
 
-function AdminSettingsPanel({ settings, setSettings, paypalConfigured }) {
+function AdminSettingsPanel({ settings, setSettings, paypalConfigured, products }) {
   const [draft, setDraft] = useState(settings || {});
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -592,6 +637,8 @@ function AdminSettingsPanel({ settings, setSettings, paypalConfigured }) {
           paypalReturnUrl: draft.paypalReturnUrl || "",
           paypalCancelUrl: draft.paypalCancelUrl || "",
           paypalFallbackUrl: draft.paypalFallbackUrl || "",
+          customAdaPayPalLink: draft.customAdaPayPalLink || "",
+          productPayPalLinks: draft.productPayPalLinks || {},
           autoRedirectPayPal: Boolean(draft.autoRedirectPayPal)
         }
       });
@@ -623,6 +670,27 @@ function AdminSettingsPanel({ settings, setSettings, paypalConfigured }) {
           Manual PayPal fallback link
           <input value={draft.paypalFallbackUrl || ""} onChange={(event) => setDraft({ ...draft, paypalFallbackUrl: event.target.value })} />
         </label>
+        <label>
+          Custom ADA PayPal link
+          <input value={draft.customAdaPayPalLink || ""} onChange={(event) => setDraft({ ...draft, customAdaPayPalLink: event.target.value })} />
+        </label>
+        {products.map((product) => (
+          <label key={product.id}>
+            {product.name} PayPal link
+            <input
+              value={draft.productPayPalLinks?.[product.id] || ""}
+              onChange={(event) =>
+                setDraft({
+                  ...draft,
+                  productPayPalLinks: {
+                    ...(draft.productPayPalLinks || {}),
+                    [product.id]: event.target.value
+                  }
+                })
+              }
+            />
+          </label>
+        ))}
         <label className="toggle-row">
           <input
             type="checkbox"
@@ -688,6 +756,11 @@ function AdminDashboard({ state, setState, refreshPrice }) {
     await loadAdmin();
   }
 
+  async function syncOrder(orderId) {
+    await api(`/api/admin/orders/${orderId}/sync`, { method: "POST" });
+    await loadAdmin();
+  }
+
   async function logout() {
     await api("/api/auth/logout", { method: "POST" });
     setState((current) => ({ ...current, user: null }));
@@ -746,7 +819,7 @@ function AdminDashboard({ state, setState, refreshPrice }) {
         </section>
 
         {settings && (
-          <AdminSettingsPanel settings={settings} setSettings={setSettings} paypalConfigured={paypalConfigured} />
+          <AdminSettingsPanel settings={settings} setSettings={setSettings} paypalConfigured={paypalConfigured} products={state.products} />
         )}
 
         <section className="orders-table-wrap">
@@ -770,7 +843,7 @@ function AdminDashboard({ state, setState, refreshPrice }) {
               <span>Total</span>
               <span>ADA</span>
               <span>Created</span>
-              <span>Actions</span>
+              <span>Status / payment</span>
             </div>
             {orders.map((order) => (
               <div className="orders-row" key={order.id}>
@@ -792,6 +865,9 @@ function AdminDashboard({ state, setState, refreshPrice }) {
                       <ExternalLink size={15} />
                     </a>
                   )}
+                  <button className="icon-button" type="button" onClick={() => syncOrder(order.id)} aria-label={`Sync ${order.publicId}`} title="Sync payment">
+                    <RefreshCw size={15} />
+                  </button>
                   <button className="icon-button danger" type="button" onClick={() => deleteOrder(order.id)} aria-label={`Delete ${order.publicId}`} title="Delete order">
                     <Trash2 size={15} />
                   </button>
