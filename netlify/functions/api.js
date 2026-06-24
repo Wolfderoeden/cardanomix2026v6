@@ -45,6 +45,16 @@ const settingsSchema = z.object({
   paypalFallbackUrl: z.string().url().or(z.literal("")),
   customAdaPayPalLink: z.string().url().or(z.literal("")),
   productPayPalLinks: z.record(z.string(), z.string().url().or(z.literal(""))).optional(),
+  productMargins: z.record(z.string(), z.number().min(0).max(95)).optional(),
+  textContent: z
+    .object({
+      brandSubtitle: z.string().max(80).optional(),
+      heroEyebrow: z.string().max(80).optional(),
+      heroTitle: z.string().max(80).optional(),
+      heroBody: z.string().max(240).optional(),
+      legalNotice: z.string().max(5000).optional()
+    })
+    .optional(),
   autoRedirectPayPal: z.boolean().optional()
 });
 
@@ -267,18 +277,25 @@ function requireAdmin(user) {
   }
 }
 
-function calculateOrderItems(inputItems) {
+function calculateOrderItems(inputItems, settings) {
   return inputItems.map((input) => {
     const product = findProduct(input.productId);
     if (!product) {
       throw Object.assign(new Error(`Unknown product: ${input.productId}`), { status: 400 });
     }
+    const marginPercent = Number(settings.productMargins?.[product.id] || 0);
+    const grossUsd = Number((product.priceUsd * input.quantity).toFixed(2));
+    const marginUsd = Number((grossUsd * (marginPercent / 100)).toFixed(2));
+    const quoteUsd = Number((grossUsd - marginUsd).toFixed(2));
     return {
       productId: product.id,
       name: product.name,
       quantity: input.quantity,
       unitPriceUsd: product.priceUsd,
-      totalUsd: Number((product.priceUsd * input.quantity).toFixed(2))
+      totalUsd: grossUsd,
+      quoteUsd,
+      marginPercent,
+      marginUsd
     };
   });
 }
@@ -333,6 +350,15 @@ function defaultSettings() {
     paypalFallbackUrl: env("PAYPAL_FALLBACK_URL", ""),
     customAdaPayPalLink: env("PAYPAL_CUSTOM_ADA_LINK", ""),
     productPayPalLinks: Object.fromEntries(PRODUCTS.map((product) => [product.id, ""])),
+    productMargins: Object.fromEntries(PRODUCTS.map((product) => [product.id, 0])),
+    textContent: {
+      brandSubtitle: "ADA Voucher Store",
+      heroEyebrow: "",
+      heroTitle: "CardanoMix",
+      heroBody: "Buy Cardano with vouchers — simple checkout, customer account, and live ADA pricing based on Binance.",
+      legalNotice:
+        "CardanoMix is designed to provide a transparent and compliance-conscious voucher checkout experience for users who wish to purchase ADA-related vouchers.\n\nWe only collect and store the account, wallet-address, order, session, and transaction-related data that is necessary to operate the checkout process, maintain account security, reconcile payments, and provide operational support. Personal data is not sold, shared for advertising purposes, or used for unrelated marketing activities.\n\nPayment information is processed by PayPal as the external payment provider. CardanoMix does not store full payment card details. Binance market data is used solely as a pricing reference for ADA exchange-rate calculations and is not used for trading, custody, or financial advisory services.\n\nCryptocurrency markets are volatile, and ADA prices may change rapidly. CardanoMix does not provide financial, investment, tax, or legal advice. CardanoMix does not provide custody services, investment guarantees, price guarantees, or compensation for market losses. Users are responsible for entering the correct wallet information, confirming their payment details, understanding applicable tax obligations, and ensuring that the use of the service is permitted under their local laws and regulations.\n\nOur security and privacy approach is based on recognised data-protection and risk-management principles, including data minimisation, purpose limitation, access control, secure session handling, hashed passwords, least-privilege access to secrets, and regular operational review. These measures are designed to support GDPR/DSGVO principles and modern information-security expectations, including risk-management practices associated with ISMS and NIS2-oriented security frameworks where applicable."
+    },
     autoRedirectPayPal: false
   };
 }
@@ -358,6 +384,13 @@ async function writeSettings(settings) {
     productPayPalLinks: Object.fromEntries(
       PRODUCTS.map((product) => [product.id, String(settings.productPayPalLinks?.[product.id] || "").trim()])
     ),
+    productMargins: Object.fromEntries(
+      PRODUCTS.map((product) => [product.id, Number(settings.productMargins?.[product.id] || 0)])
+    ),
+    textContent: {
+      ...defaultSettings().textContent,
+      ...(settings.textContent || {})
+    },
     autoRedirectPayPal: Boolean(settings.autoRedirectPayPal)
   };
   await store().setJSON(SETTINGS_KEY, nextSettings);
@@ -538,6 +571,8 @@ async function handle(request, context) {
         paypalFallbackUrl: settings.paypalFallbackUrl,
         customAdaPayPalLink: settings.customAdaPayPalLink,
         productPayPalLinks: settings.productPayPalLinks,
+        productMargins: settings.productMargins,
+        textContent: settings.textContent,
         autoRedirectPayPal: settings.autoRedirectPayPal
       },
       paypalConfigured: paypalConfigured(paypalCredentials())
@@ -585,8 +620,10 @@ async function handle(request, context) {
   if (request.method === "POST" && path === "/api/orders") {
     requireUser(user);
     const payload = orderSchema.parse(await request.json());
-    const items = calculateOrderItems(payload.items);
+    const settings = await readSettings();
+    const items = calculateOrderItems(payload.items, settings);
     const totalUsd = Number(items.reduce((sum, item) => sum + item.totalUsd, 0).toFixed(2));
+    const quoteUsd = Number(items.reduce((sum, item) => sum + item.quoteUsd, 0).toFixed(2));
     const price = await fetchAdaPrice({
       quoteCurrency: env("ADA_QUOTE_CURRENCY", "USD"),
       baseUrl: env("BINANCE_API_BASE")
@@ -600,10 +637,14 @@ async function handle(request, context) {
       },
       items,
       totalUsd,
-      adaAmount: quoteAdaAmount(totalUsd, price.price),
+      voucherAmountUsd: totalUsd,
+      quoteUsd,
+      marginPercent: items[0]?.marginPercent || 0,
+      marginUsd: Number(items.reduce((sum, item) => sum + item.marginUsd, 0).toFixed(2)),
+      adaAmount: quoteAdaAmount(quoteUsd, price.price),
       price
     });
-    return json({ order: await attachPaymentLink(order, await readSettings()) }, 201);
+    return json({ order: await attachPaymentLink(order, settings) }, 201);
   }
 
   if (request.method === "POST" && path === "/api/orders/custom") {

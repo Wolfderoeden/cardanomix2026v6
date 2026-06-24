@@ -26,8 +26,25 @@ const currency = new Intl.NumberFormat("en-US", {
   currency: "USD"
 });
 
+const DEFAULT_LEGAL_NOTICE =
+  "CardanoMix is designed to provide a transparent and compliance-conscious voucher checkout experience for users who wish to purchase ADA-related vouchers.\n\nWe only collect and store the account, wallet-address, order, session, and transaction-related data that is necessary to operate the checkout process, maintain account security, reconcile payments, and provide operational support. Personal data is not sold, shared for advertising purposes, or used for unrelated marketing activities.\n\nPayment information is processed by PayPal as the external payment provider. CardanoMix does not store full payment card details. Binance market data is used solely as a pricing reference for ADA exchange-rate calculations and is not used for trading, custody, or financial advisory services.\n\nCryptocurrency markets are volatile, and ADA prices may change rapidly. CardanoMix does not provide financial, investment, tax, or legal advice. CardanoMix does not provide custody services, investment guarantees, price guarantees, or compensation for market losses. Users are responsible for entering the correct wallet information, confirming their payment details, understanding applicable tax obligations, and ensuring that the use of the service is permitted under their local laws and regulations.\n\nOur security and privacy approach is based on recognised data-protection and risk-management principles, including data minimisation, purpose limitation, access control, secure session handling, hashed passwords, least-privilege access to secrets, and regular operational review. These measures are designed to support GDPR/DSGVO principles and modern information-security expectations, including risk-management practices associated with ISMS and NIS2-oriented security frameworks where applicable.";
+
 function classNames(...values) {
   return values.filter(Boolean).join(" ");
+}
+
+function maskWallet(walletAddress = "") {
+  if (!walletAddress) {
+    return "No wallet";
+  }
+  if (walletAddress.length <= 12) {
+    return walletAddress;
+  }
+  return `${walletAddress.slice(0, 5)}...${walletAddress.slice(-4)}`;
+}
+
+function contentFrom(settings) {
+  return settings?.settings?.textContent || {};
 }
 
 async function api(path, options = {}) {
@@ -106,14 +123,14 @@ function useBootstrap() {
   return [state, setState, refreshPrice];
 }
 
-function Brand({ compact = false }) {
+function Brand({ compact = false, subtitle = "ADA Voucher Store" }) {
   return (
     <a className="brand" href="/" aria-label="CardanoMix Store">
       <img src="/assets/cardanomix-mark.svg" alt="" />
       {!compact && (
         <span>
           <strong>CardanoMix</strong>
-          <small>ADA Voucher Store</small>
+          <small>{subtitle}</small>
         </span>
       )}
     </a>
@@ -147,6 +164,57 @@ function PriceBadge({ price, onRefresh }) {
         <RefreshCw size={16} />
       </button>
     </div>
+  );
+}
+
+function AccountMenu({ user, theme, setTheme, onLogout }) {
+  const [orders, setOrders] = useState([]);
+
+  useEffect(() => {
+    if (!user) {
+      setOrders([]);
+      return;
+    }
+    api("/api/orders/my")
+      .then((payload) => setOrders(payload.orders || []))
+      .catch(() => setOrders([]));
+  }, [user]);
+
+  function inspectOrders() {
+    document.getElementById("customer-orders")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  return (
+    <details className="account-menu">
+      <summary className="profile-chip">
+        <UserRound size={16} />
+        <span>{user.name}</span>
+      </summary>
+      <div className="account-popover">
+        <div>
+          <div className="mini-heading">Wallet</div>
+          <p className="wallet-note">{maskWallet(user.walletAddress)}</p>
+        </div>
+        <ThemeSwitch theme={theme} setTheme={setTheme} />
+        <button className="ghost-button" type="button" onClick={inspectOrders}>
+          Inspect orders
+        </button>
+        <div className="account-orders">
+          <div className="mini-heading">Orders</div>
+          {orders.length === 0 && <p className="muted">No orders yet.</p>}
+          {orders.map((order) => (
+            <div className="order-chip compact" key={order.id}>
+              <span>{order.publicId}</span>
+              <strong>{order.status}</strong>
+            </div>
+          ))}
+        </div>
+        <button className="ghost-button" onClick={onLogout} type="button">
+          <LogOut size={16} />
+          Logout
+        </button>
+      </div>
+    </details>
   );
 }
 
@@ -210,8 +278,9 @@ function AuthPanel({ mode, setMode, onAuth }) {
   );
 }
 
-function ProductCard({ product, adaPrice, quantity, setQuantity }) {
-  const adaAmount = adaPrice ? (product.priceUsd / adaPrice.price).toFixed(4) : "0.0000";
+function ProductCard({ product, adaPrice, marginPercent = 0, quantity, setQuantity }) {
+  const quoteUsd = product.priceUsd * (1 - marginPercent / 100);
+  const adaAmount = adaPrice ? (quoteUsd / adaPrice.price).toFixed(4) : "0.0000";
   return (
     <article className={classNames("product-card", product.tone)}>
       <div className="voucher-face">
@@ -224,6 +293,7 @@ function ProductCard({ product, adaPrice, quantity, setQuantity }) {
           <span>{currency.format(product.priceUsd)}</span>
           <span>{adaAmount} ADA</span>
         </div>
+        {marginPercent > 0 && <small className="muted">ADA quote after {marginPercent}% service margin</small>}
       </div>
       <div className="stepper">
         <button
@@ -239,7 +309,7 @@ function ProductCard({ product, adaPrice, quantity, setQuantity }) {
   );
 }
 
-function CartPanel({ products, cart, price, user, theme, setTheme, orderMode, setOrderMode, setUser, setCart }) {
+function CartPanel({ products, cart, price, user, settings, orderMode, setOrderMode, setUser, setCart }) {
   const [authMode, setAuthMode] = useState("register");
   const [orders, setOrders] = useState([]);
   const [customUsd, setCustomUsd] = useState("");
@@ -260,7 +330,10 @@ function CartPanel({ products, cart, price, user, theme, setTheme, orderMode, se
     [cart, products]
   );
   const total = cartItems.reduce((sum, item) => sum + item.lineTotal, 0);
-  const ada = price && total ? (total / price.price).toFixed(6) : "0.000000";
+  const selectedProduct = cartItems[0];
+  const selectedMargin = Number(settings?.settings?.productMargins?.[selectedProduct?.id] || 0);
+  const quoteUsd = selectedProduct ? Number((total * (1 - selectedMargin / 100)).toFixed(2)) : 0;
+  const ada = price && quoteUsd ? (quoteUsd / price.price).toFixed(6) : "0.000000";
   const customUsdNumber = Number(customUsd);
   const customAdaQuote = price && Number.isFinite(customUsdNumber) && customUsdNumber > 0 ? customUsdNumber / price.price : 0;
 
@@ -334,7 +407,7 @@ function CartPanel({ products, cart, price, user, theme, setTheme, orderMode, se
   }
 
   return (
-    <aside className={classNames("cart-panel", `mode-${orderMode}`)}>
+    <aside className={classNames("cart-panel", `mode-${orderMode}`)} id="order-desk">
       <div className="section-title">
         <ShoppingCart size={18} />
         <span>Order desk</span>
@@ -365,7 +438,7 @@ function CartPanel({ products, cart, price, user, theme, setTheme, orderMode, se
         <div className="quote-total ada-focus">
           <span>ADA quote</span>
           <strong>{ada} ADA</strong>
-          <small>{currency.format(total)} at Binance live price</small>
+          <small>{currency.format(quoteUsd)} quoted from {currency.format(total)} voucher at Binance live price</small>
         </div>
       )}
 
@@ -395,13 +468,7 @@ function CartPanel({ products, cart, price, user, theme, setTheme, orderMode, se
         <AuthPanel mode={authMode} setMode={setAuthMode} onAuth={setUser} />
       ) : (
         <div className="signed-in">
-          <div className="account-settings">
-            <div>
-              <div className="mini-heading">Account settings</div>
-              <p className="muted wallet-note">{user.walletAddress}</p>
-            </div>
-            <ThemeSwitch theme={theme} setTheme={setTheme} />
-          </div>
+          <p className="muted wallet-note">{maskWallet(user.walletAddress)}</p>
           {error && <p className="form-error">{error}</p>}
           {status && <p className="form-success">{status}</p>}
           {orderMode === "voucher" && (
@@ -422,7 +489,7 @@ function CartPanel({ products, cart, price, user, theme, setTheme, orderMode, se
       {!user && orderMode === "custom" && <p className="muted">Register with your wallet before continuing to PayPal.</p>}
 
       {user && (
-        <div className="recent-orders">
+        <div className="recent-orders" id="customer-orders">
           <div className="mini-heading">Your orders</div>
           {orders.length === 0 && <p className="muted">No previous orders yet.</p>}
           {orders.map((order) => (
@@ -441,11 +508,15 @@ function Storefront({ state, setState, refreshPrice }) {
   const [theme, setTheme] = useState("arctic");
   const [cart, setCart] = useState({});
   const [orderMode, setOrderMode] = useState("custom");
+  const content = contentFrom(state.settings);
 
   function setQuantity(productId, quantity) {
     setCart(quantity > 0 ? { [productId]: 1 } : {});
     if (quantity > 0) {
       setOrderMode("voucher");
+      if (window.innerWidth <= 700) {
+        setTimeout(() => document.getElementById("order-desk")?.scrollIntoView({ behavior: "smooth", block: "start" }), 40);
+      }
     }
   }
 
@@ -461,16 +532,10 @@ function Storefront({ state, setState, refreshPrice }) {
   return (
     <div className="app-shell storefront">
       <header className="topbar">
-        <Brand />
+        <Brand subtitle={content.brandSubtitle || "ADA Voucher Store"} />
         <nav>
           {state.user ? (
-            <div className="profile-chip">
-              <UserRound size={16} />
-              <span>{state.user.name}</span>
-              <button className="icon-button" type="button" onClick={logout} aria-label="Logout" title="Logout">
-                <LogOut size={15} />
-              </button>
-            </div>
+            <AccountMenu user={state.user} theme={theme} setTheme={setTheme} onLogout={logout} />
           ) : (
             <span className="muted">Wallet checkout</span>
           )}
@@ -481,9 +546,9 @@ function Storefront({ state, setState, refreshPrice }) {
         <section className="store-main">
           <div className="store-hero">
             <div className="hero-copy">
-              <span className="eyebrow">Live ADA vouchers</span>
-              <h1>CardanoMix</h1>
-              <p>Buy Cardano with vouchers — simple checkout, customer account, and live ADA pricing based on Binance.</p>
+              {content.heroEyebrow && <span className="eyebrow">{content.heroEyebrow}</span>}
+              <h1>{content.heroTitle || "CardanoMix"}</h1>
+              <p>{content.heroBody || "Buy Cardano with vouchers — simple checkout, customer account, and live ADA pricing based on Binance."}</p>
               <PriceBadge price={state.price} onRefresh={refreshPrice} />
             </div>
             <img className="hero-asset" src="/assets/voucher-stack.svg" alt="Stacked ADA voucher cards" />
@@ -502,6 +567,7 @@ function Storefront({ state, setState, refreshPrice }) {
                 key={product.id}
                 product={product}
                 adaPrice={state.price}
+                marginPercent={Number(state.settings?.settings?.productMargins?.[product.id] || 0)}
                 quantity={cart[product.id] || 0}
                 setQuantity={setQuantity}
               />
@@ -514,39 +580,27 @@ function Storefront({ state, setState, refreshPrice }) {
           cart={cart}
           price={state.price}
           user={state.user}
-          theme={theme}
-          setTheme={setTheme}
+          settings={state.settings}
           orderMode={orderMode}
           setOrderMode={setOrderMode}
           setUser={(user) => setState((current) => ({ ...current, user }))}
           setCart={setCart}
         />
       </main>
-      <Footer />
+      <Footer settings={state.settings} />
     </div>
   );
 }
 
-function Footer() {
+function Footer({ settings }) {
+  const legalNotice = contentFrom(settings).legalNotice || DEFAULT_LEGAL_NOTICE;
   return (
     <footer className="site-footer">
       <details className="legal-copy">
         <summary>Terms, Privacy, Risk & Liability Notice</summary>
-        <p>
-          CardanoMix is designed to provide a transparent and compliance-conscious voucher checkout experience for users who wish to purchase ADA-related vouchers.
-        </p>
-        <p>
-          We only collect and store the account, wallet-address, order, session, and transaction-related data that is necessary to operate the checkout process, maintain account security, reconcile payments, and provide operational support. Personal data is not sold, shared for advertising purposes, or used for unrelated marketing activities.
-        </p>
-        <p>
-          Payment information is processed by PayPal as the external payment provider. CardanoMix does not store full payment card details. Binance market data is used solely as a pricing reference for ADA exchange-rate calculations and is not used for trading, custody, or financial advisory services.
-        </p>
-        <p>
-          Cryptocurrency markets are volatile, and ADA prices may change rapidly. CardanoMix does not provide financial, investment, tax, or legal advice. CardanoMix does not provide custody services, investment guarantees, price guarantees, or compensation for market losses. Users are responsible for entering the correct wallet information, confirming their payment details, understanding applicable tax obligations, and ensuring that the use of the service is permitted under their local laws and regulations.
-        </p>
-        <p>
-          Our security and privacy approach is based on recognised data-protection and risk-management principles, including data minimisation, purpose limitation, access control, secure session handling, hashed passwords, least-privilege access to secrets, and regular operational review. These measures are designed to support GDPR/DSGVO principles and modern information-security expectations, including risk-management practices associated with ISMS and NIS2-oriented security frameworks where applicable.
-        </p>
+        {legalNotice.split("\n\n").filter(Boolean).map((paragraph) => (
+          <p key={paragraph}>{paragraph}</p>
+        ))}
       </details>
     </footer>
   );
@@ -606,16 +660,18 @@ function StatusPill({ value }) {
 }
 
 function exportOrdersCsv(orders) {
-  const headers = ["Order", "Type", "Wallet", "Total USD", "ADA", "Status", "Payment URL", "Created"];
+  const headers = ["Order", "Name", "Wallet", "Timestamp", "Voucher Amount USD", "Quote USD", "Quoted ADA", "Margin %", "Status", "Payment URL"];
   const rows = orders.map((order) => [
     order.publicId,
-    order.type || "voucher",
+    order.customer?.name || "",
     order.customer?.walletAddress || order.customer?.email || "",
-    order.totalUsd ?? order.totalEur ?? 0,
+    order.createdAt,
+    order.voucherAmountUsd ?? order.totalUsd ?? order.totalEur ?? 0,
+    order.quoteUsd ?? order.totalUsd ?? order.totalEur ?? 0,
     order.adaAmount || 0,
+    order.marginPercent || 0,
     order.status,
-    order.paymentUrl || "",
-    order.createdAt
+    order.paymentUrl || ""
   ]);
   const csv = [headers, ...rows]
     .map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(","))
@@ -651,6 +707,16 @@ function AdminSettingsPanel({ settings, setSettings, paypalConfigured, products 
           paypalFallbackUrl: draft.paypalFallbackUrl || "",
           customAdaPayPalLink: draft.customAdaPayPalLink || "",
           productPayPalLinks: draft.productPayPalLinks || {},
+          productMargins: Object.fromEntries(
+            products.map((product) => [product.id, Number(draft.productMargins?.[product.id] || 0)])
+          ),
+          textContent: {
+            brandSubtitle: draft.textContent?.brandSubtitle || "",
+            heroEyebrow: draft.textContent?.heroEyebrow || "",
+            heroTitle: draft.textContent?.heroTitle || "",
+            heroBody: draft.textContent?.heroBody || "",
+            legalNotice: draft.textContent?.legalNotice || ""
+          },
           autoRedirectPayPal: Boolean(draft.autoRedirectPayPal)
         }
       });
@@ -703,6 +769,27 @@ function AdminSettingsPanel({ settings, setSettings, paypalConfigured, products 
             />
           </label>
         ))}
+        {products.map((product) => (
+          <label key={`${product.id}-margin`}>
+            {product.name} margin %
+            <input
+              type="number"
+              min="0"
+              max="95"
+              step="0.1"
+              value={draft.productMargins?.[product.id] || 0}
+              onChange={(event) =>
+                setDraft({
+                  ...draft,
+                  productMargins: {
+                    ...(draft.productMargins || {}),
+                    [product.id]: Number(event.target.value)
+                  }
+                })
+              }
+            />
+          </label>
+        ))}
         <label className="toggle-row">
           <input
             type="checkbox"
@@ -710,6 +797,45 @@ function AdminSettingsPanel({ settings, setSettings, paypalConfigured, products 
             onChange={(event) => setDraft({ ...draft, autoRedirectPayPal: event.target.checked })}
           />
           Auto redirect after order
+        </label>
+      </div>
+      <div className="settings-grid text-settings">
+        <label>
+          Brand subtitle
+          <input
+            value={draft.textContent?.brandSubtitle || ""}
+            onChange={(event) => setDraft({ ...draft, textContent: { ...(draft.textContent || {}), brandSubtitle: event.target.value } })}
+          />
+        </label>
+        <label>
+          Hero eyebrow
+          <input
+            value={draft.textContent?.heroEyebrow || ""}
+            onChange={(event) => setDraft({ ...draft, textContent: { ...(draft.textContent || {}), heroEyebrow: event.target.value } })}
+            placeholder="Leave empty to hide"
+          />
+        </label>
+        <label>
+          Hero title
+          <input
+            value={draft.textContent?.heroTitle || ""}
+            onChange={(event) => setDraft({ ...draft, textContent: { ...(draft.textContent || {}), heroTitle: event.target.value } })}
+          />
+        </label>
+        <label>
+          Hero body
+          <textarea
+            value={draft.textContent?.heroBody || ""}
+            onChange={(event) => setDraft({ ...draft, textContent: { ...(draft.textContent || {}), heroBody: event.target.value } })}
+          />
+        </label>
+        <label className="wide-field">
+          Footer legal notice
+          <textarea
+            value={draft.textContent?.legalNotice || ""}
+            onChange={(event) => setDraft({ ...draft, textContent: { ...(draft.textContent || {}), legalNotice: event.target.value } })}
+            rows={8}
+          />
         </label>
       </div>
       {error && <p className="form-error">{error}</p>}
@@ -727,6 +853,7 @@ function AdminDashboard({ state, setState, refreshPrice }) {
   const [summary, setSummary] = useState(null);
   const [settings, setSettings] = useState(null);
   const [paypalConfigured, setPaypalConfigured] = useState(false);
+  const [adminTheme, setAdminTheme] = useState("midnight");
   const [error, setError] = useState("");
 
   async function loadAdmin() {
@@ -747,7 +874,10 @@ function AdminDashboard({ state, setState, refreshPrice }) {
   }
 
   useEffect(() => {
-    document.documentElement.dataset.theme = "midnight";
+    document.documentElement.dataset.theme = adminTheme;
+  }, [adminTheme]);
+
+  useEffect(() => {
     loadAdmin();
   }, []);
 
@@ -784,6 +914,7 @@ function AdminDashboard({ state, setState, refreshPrice }) {
         <Brand />
         <nav>
           <a href="/">Store</a>
+          <ThemeSwitch theme={adminTheme} setTheme={setAdminTheme} />
           <button className="ghost-button" onClick={logout} type="button">
             <LogOut size={16} />
             Logout
@@ -851,19 +982,21 @@ function AdminDashboard({ state, setState, refreshPrice }) {
           <div className="orders-table">
             <div className="orders-row header">
               <span>Order</span>
+              <span>Name</span>
               <span>Wallet</span>
-              <span>Total</span>
-              <span>ADA</span>
-              <span>Created</span>
+              <span>Timestamp</span>
+              <span>Voucher</span>
+              <span>Quoted ADA</span>
               <span>Status / payment</span>
             </div>
             {orders.map((order) => (
               <div className="orders-row" key={order.id}>
                 <span>{order.publicId}</span>
+                <span>{order.customer?.name || "Unknown"}</span>
                 <span className="wallet-text">{order.customer?.walletAddress || order.customer?.email || "Unknown"}</span>
-                <span>{currency.format(order.totalUsd ?? order.totalEur ?? 0)}</span>
-                <span>{order.adaAmount}</span>
-                <span>{new Date(order.createdAt).toLocaleDateString()}</span>
+                <span>{new Date(order.createdAt).toLocaleString()}</span>
+                <span>{currency.format(order.voucherAmountUsd ?? order.totalUsd ?? order.totalEur ?? 0)}</span>
+                <span>{Number(order.adaAmount || 0).toFixed(6)}</span>
                 <span className="status-cell">
                   <StatusPill value={order.status} />
                   <select value={order.status} onChange={(event) => setOrderStatus(order.id, event.target.value)} aria-label={`Set status for ${order.publicId}`}>

@@ -61,6 +61,16 @@ const settingsSchema = z.object({
   paypalFallbackUrl: z.string().url().or(z.literal("")),
   customAdaPayPalLink: z.string().url().or(z.literal("")),
   productPayPalLinks: z.record(z.string(), z.string().url().or(z.literal(""))).optional(),
+  productMargins: z.record(z.string(), z.number().min(0).max(95)).optional(),
+  textContent: z
+    .object({
+      brandSubtitle: z.string().max(80).optional(),
+      heroEyebrow: z.string().max(80).optional(),
+      heroTitle: z.string().max(80).optional(),
+      heroBody: z.string().max(240).optional(),
+      legalNotice: z.string().max(5000).optional()
+    })
+    .optional(),
   autoRedirectPayPal: z.boolean().optional()
 });
 
@@ -68,7 +78,7 @@ const statusSchema = z.object({
   status: z.enum(["new", "reviewing", "completed", "cancelled"])
 });
 
-function calculateOrderItems(inputItems) {
+function calculateOrderItems(inputItems, settings) {
   return inputItems.map((input) => {
     const product = findProduct(input.productId);
     if (!product) {
@@ -76,12 +86,19 @@ function calculateOrderItems(inputItems) {
       error.status = 400;
       throw error;
     }
+    const marginPercent = Number(settings.productMargins?.[product.id] || 0);
+    const grossUsd = Number((product.priceUsd * input.quantity).toFixed(2));
+    const marginUsd = Number((grossUsd * (marginPercent / 100)).toFixed(2));
+    const quoteUsd = Number((grossUsd - marginUsd).toFixed(2));
     return {
       productId: product.id,
       name: product.name,
       quantity: input.quantity,
       unitPriceUsd: product.priceUsd,
-      totalUsd: Number((product.priceUsd * input.quantity).toFixed(2))
+      totalUsd: grossUsd,
+      quoteUsd,
+      marginPercent,
+      marginUsd
     };
   });
 }
@@ -196,6 +213,8 @@ export function createApp() {
           paypalFallbackUrl: settings.paypalFallbackUrl,
           customAdaPayPalLink: settings.customAdaPayPalLink,
           productPayPalLinks: settings.productPayPalLinks,
+          productMargins: settings.productMargins,
+          textContent: settings.textContent,
           autoRedirectPayPal: settings.autoRedirectPayPal
         },
         paypalConfigured: paypalConfigured(paypalCredentials())
@@ -261,10 +280,12 @@ export function createApp() {
   app.post("/api/orders", requireUser, async (req, res, next) => {
     try {
       const payload = orderSchema.parse(req.body);
-      const items = calculateOrderItems(payload.items);
+      const settings = await readSettings();
+      const items = calculateOrderItems(payload.items, settings);
       const totalUsd = Number(items.reduce((sum, item) => sum + item.totalUsd, 0).toFixed(2));
+      const quoteUsd = Number(items.reduce((sum, item) => sum + item.quoteUsd, 0).toFixed(2));
       const price = await fetchAdaPrice();
-      const adaAmount = quoteAdaAmount(totalUsd, price.price);
+      const adaAmount = quoteAdaAmount(quoteUsd, price.price);
       const order = await createOrder({
         type: "voucher",
         userId: req.user.id,
@@ -274,10 +295,14 @@ export function createApp() {
         },
         items,
         totalUsd,
+        voucherAmountUsd: totalUsd,
+        quoteUsd,
+        marginPercent: items[0]?.marginPercent || 0,
+        marginUsd: Number(items.reduce((sum, item) => sum + item.marginUsd, 0).toFixed(2)),
         adaAmount,
         price
       });
-      const orderWithPayment = await attachPaymentLink(order, await readSettings());
+      const orderWithPayment = await attachPaymentLink(order, settings);
       res.status(201).json({ order: orderWithPayment });
     } catch (error) {
       next(error);

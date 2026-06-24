@@ -35,3 +35,13 @@ test("netlify function is bound to admin and api routes", () => {
   assert.ok(config.path.includes("/api/admin/orders/:orderId"));
   assert.ok(config.path.includes("/api/admin/orders/:orderId/sync"));
 });
+
+test("netlify settings expose margins and editable storefront copy", async () => {
+  const response = await api(new Request("https://example.test/api/settings"), { params: {} });
+  const body = await readJson(response);
+
+  assert.equal(response.status, 200);
+  assert.ok(body.settings.productMargins);
+  assert.ok(body.settings.textContent);
+  assert.equal(body.settings.textContent.heroTitle, "CardanoMix");
+});

@@ -181,6 +181,15 @@ export function defaultSettings() {
     paypalFallbackUrl: process.env.PAYPAL_FALLBACK_URL || "",
     customAdaPayPalLink: process.env.PAYPAL_CUSTOM_ADA_LINK || "",
     productPayPalLinks: {},
+    productMargins: {},
+    textContent: {
+      brandSubtitle: "ADA Voucher Store",
+      heroEyebrow: "",
+      heroTitle: "CardanoMix",
+      heroBody: "Buy Cardano with vouchers — simple checkout, customer account, and live ADA pricing based on Binance.",
+      legalNotice:
+        "CardanoMix is designed to provide a transparent and compliance-conscious voucher checkout experience for users who wish to purchase ADA-related vouchers.\n\nWe only collect and store the account, wallet-address, order, session, and transaction-related data that is necessary to operate the checkout process, maintain account security, reconcile payments, and provide operational support. Personal data is not sold, shared for advertising purposes, or used for unrelated marketing activities.\n\nPayment information is processed by PayPal as the external payment provider. CardanoMix does not store full payment card details. Binance market data is used solely as a pricing reference for ADA exchange-rate calculations and is not used for trading, custody, or financial advisory services.\n\nCryptocurrency markets are volatile, and ADA prices may change rapidly. CardanoMix does not provide financial, investment, tax, or legal advice. CardanoMix does not provide custody services, investment guarantees, price guarantees, or compensation for market losses. Users are responsible for entering the correct wallet information, confirming their payment details, understanding applicable tax obligations, and ensuring that the use of the service is permitted under their local laws and regulations.\n\nOur security and privacy approach is based on recognised data-protection and risk-management principles, including data minimisation, purpose limitation, access control, secure session handling, hashed passwords, least-privilege access to secrets, and regular operational review. These measures are designed to support GDPR/DSGVO principles and modern information-security expectations, including risk-management practices associated with ISMS and NIS2-oriented security frameworks where applicable."
+    },
     autoRedirectPayPal: false
   };
 }
@@ -202,6 +211,13 @@ export async function writeSettings(settings) {
     productPayPalLinks: Object.fromEntries(
       Object.entries(settings.productPayPalLinks || {}).map(([key, value]) => [key, String(value || "").trim()])
     ),
+    productMargins: Object.fromEntries(
+      Object.entries(settings.productMargins || {}).map(([key, value]) => [key, Number(value || 0)])
+    ),
+    textContent: {
+      ...defaultSettings().textContent,
+      ...(settings.textContent || {})
+    },
     autoRedirectPayPal: Boolean(settings.autoRedirectPayPal)
   };
   await writeJsonFile("settings.json", nextSettings);
