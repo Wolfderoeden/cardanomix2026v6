@@ -239,11 +239,10 @@ function ProductCard({ product, adaPrice, quantity, setQuantity }) {
   );
 }
 
-function CartPanel({ products, cart, price, user, settings, setUser, setCart }) {
+function CartPanel({ products, cart, price, user, theme, setTheme, orderMode, setOrderMode, setUser, setCart }) {
   const [authMode, setAuthMode] = useState("register");
-  const [orderMode, setOrderMode] = useState("voucher");
   const [orders, setOrders] = useState([]);
-  const [customAda, setCustomAda] = useState("");
+  const [customUsd, setCustomUsd] = useState("");
   const [paymentUrl, setPaymentUrl] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -262,8 +261,8 @@ function CartPanel({ products, cart, price, user, settings, setUser, setCart }) 
   );
   const total = cartItems.reduce((sum, item) => sum + item.lineTotal, 0);
   const ada = price && total ? (total / price.price).toFixed(6) : "0.000000";
-  const customAdaNumber = Number(customAda);
-  const customUsd = price && Number.isFinite(customAdaNumber) && customAdaNumber > 0 ? customAdaNumber * price.price : 0;
+  const customUsdNumber = Number(customUsd);
+  const customAdaQuote = price && Number.isFinite(customUsdNumber) && customUsdNumber > 0 ? customUsdNumber / price.price : 0;
 
   async function loadOrders() {
     if (!user) {
@@ -290,7 +289,7 @@ function CartPanel({ products, cart, price, user, settings, setUser, setCart }) 
       });
       setStatus(`Order ${payload.order.publicId} received`);
       setPaymentUrl(payload.order.paymentUrl || "");
-      if (settings?.settings?.autoRedirectPayPal && payload.order.paymentUrl) {
+      if (payload.order.paymentUrl) {
         window.location.href = payload.order.paymentUrl;
       }
       setCart({});
@@ -311,7 +310,7 @@ function CartPanel({ products, cart, price, user, settings, setUser, setCart }) 
       const payload = await api("/api/orders/custom", {
         method: "POST",
         body: {
-          adaAmount: Number(customAda)
+          adaAmount: Number(customAdaQuote.toFixed(6))
         }
       });
       setStatus(`Order ${payload.order.publicId} received`);
@@ -319,7 +318,7 @@ function CartPanel({ products, cart, price, user, settings, setUser, setCart }) 
       if (payload.order.paymentUrl) {
         window.location.href = payload.order.paymentUrl;
       }
-      setCustomAda("");
+      setCustomUsd("");
       await loadOrders();
     } catch (requestError) {
       setError(requestError.message);
@@ -335,18 +334,18 @@ function CartPanel({ products, cart, price, user, settings, setUser, setCart }) 
   }
 
   return (
-    <aside className="cart-panel">
+    <aside className={classNames("cart-panel", `mode-${orderMode}`)}>
       <div className="section-title">
         <ShoppingCart size={18} />
         <span>Order desk</span>
       </div>
 
       <div className="segmented full" aria-label="Order type">
-        <button className={orderMode === "voucher" ? "active" : ""} type="button" onClick={() => setOrderMode("voucher")}>
-          Voucher
-        </button>
         <button className={orderMode === "custom" ? "active" : ""} type="button" onClick={() => setOrderMode("custom")}>
           Custom ADA
+        </button>
+        <button className={orderMode === "voucher" ? "active" : ""} type="button" onClick={() => setOrderMode("voucher")}>
+          Voucher
         </button>
       </div>
 
@@ -374,20 +373,20 @@ function CartPanel({ products, cart, price, user, settings, setUser, setCart }) 
         <div className="custom-buy-panel">
           <div className="mini-heading">Custom ADA buy</div>
           <label>
-            ADA amount
+            USD amount
             <input
               type="number"
               min="1"
-              step="0.000001"
-              value={customAda}
-              onChange={(event) => setCustomAda(event.target.value)}
-              placeholder="1000"
+              step="0.01"
+              value={customUsd}
+              onChange={(event) => setCustomUsd(event.target.value)}
+              placeholder="100.00"
             />
           </label>
           <div className="quote-total ada-focus">
             <span>ADA quote</span>
-            <strong>{Number.isFinite(customAdaNumber) && customAdaNumber > 0 ? customAdaNumber.toFixed(6) : "0.000000"} ADA</strong>
-            <small>{currency.format(customUsd)} at Binance live price</small>
+            <strong>{customAdaQuote > 0 ? customAdaQuote.toFixed(6) : "0.000000"} ADA</strong>
+            <small>{currency.format(customUsdNumber || 0)} at Binance live price</small>
           </div>
         </div>
       )}
@@ -396,25 +395,25 @@ function CartPanel({ products, cart, price, user, settings, setUser, setCart }) 
         <AuthPanel mode={authMode} setMode={setAuthMode} onAuth={setUser} />
       ) : (
         <div className="signed-in">
-          <p className="muted wallet-note">{user.walletAddress}</p>
+          <div className="account-settings">
+            <div>
+              <div className="mini-heading">Account settings</div>
+              <p className="muted wallet-note">{user.walletAddress}</p>
+            </div>
+            <ThemeSwitch theme={theme} setTheme={setTheme} />
+          </div>
           {error && <p className="form-error">{error}</p>}
           {status && <p className="form-success">{status}</p>}
-          {paymentUrl && (
-            <a className="primary-button" href={paymentUrl} target="_blank" rel="noreferrer">
-              <ExternalLink size={17} />
-              Continue to PayPal
-            </a>
-          )}
           {orderMode === "voucher" && (
             <button className="primary-button" type="button" onClick={checkout} disabled={busy || cartItems.length === 0}>
               <WalletCards size={17} />
-              {busy ? "Sending" : "Place order"}
+              {busy ? "Sending" : "Buy with PayPal"}
             </button>
           )}
           {orderMode === "custom" && (
-            <button className="primary-button" type="button" onClick={buyCustomAda} disabled={busy || customUsd <= 0}>
+            <button className="primary-button" type="button" disabled>
               <ExternalLink size={17} />
-              Buy ADA with PayPal
+              Coming Soon
             </button>
           )}
         </div>
@@ -422,13 +421,14 @@ function CartPanel({ products, cart, price, user, settings, setUser, setCart }) 
 
       {!user && orderMode === "custom" && <p className="muted">Register with your wallet before continuing to PayPal.</p>}
 
-      {orders.length > 0 && (
+      {user && (
         <div className="recent-orders">
-          <div className="mini-heading">Recent orders</div>
-          {orders.slice(0, 3).map((order) => (
+          <div className="mini-heading">Your orders</div>
+          {orders.length === 0 && <p className="muted">No previous orders yet.</p>}
+          {orders.map((order) => (
             <div className="order-chip" key={order.id}>
               <span>{order.publicId}</span>
-              <strong>{order.status}</strong>
+              <strong>{order.status} - {Number(order.adaAmount || 0).toFixed(4)} ADA</strong>
             </div>
           ))}
         </div>
@@ -440,9 +440,13 @@ function CartPanel({ products, cart, price, user, settings, setUser, setCart }) 
 function Storefront({ state, setState, refreshPrice }) {
   const [theme, setTheme] = useState("arctic");
   const [cart, setCart] = useState({});
+  const [orderMode, setOrderMode] = useState("custom");
 
   function setQuantity(productId, quantity) {
     setCart(quantity > 0 ? { [productId]: 1 } : {});
+    if (quantity > 0) {
+      setOrderMode("voucher");
+    }
   }
 
   async function logout() {
@@ -479,7 +483,7 @@ function Storefront({ state, setState, refreshPrice }) {
             <div className="hero-copy">
               <span className="eyebrow">Live ADA vouchers</span>
               <h1>CardanoMix</h1>
-              <p>Clean voucher checkout with direct customer accounts, Binance-priced ADA quotes, and admin order review.</p>
+              <p>Buy Cardano with vouchers — simple checkout, customer account, and live ADA pricing based on Binance.</p>
               <PriceBadge price={state.price} onRefresh={refreshPrice} />
             </div>
             <img className="hero-asset" src="/assets/voucher-stack.svg" alt="Stacked ADA voucher cards" />
@@ -510,32 +514,40 @@ function Storefront({ state, setState, refreshPrice }) {
           cart={cart}
           price={state.price}
           user={state.user}
-          settings={state.settings}
+          theme={theme}
+          setTheme={setTheme}
+          orderMode={orderMode}
+          setOrderMode={setOrderMode}
           setUser={(user) => setState((current) => ({ ...current, user }))}
           setCart={setCart}
         />
       </main>
-      <Footer theme={theme} setTheme={setTheme} />
+      <Footer />
     </div>
   );
 }
 
-function Footer({ theme, setTheme }) {
+function Footer() {
   return (
     <footer className="site-footer">
-      <ThemeSwitch theme={theme} setTheme={setTheme} />
-      <div className="legal-copy">
-        <strong>Terms, privacy, risk and liability notice</strong>
+      <details className="legal-copy">
+        <summary>Terms, Privacy, Risk & Liability Notice</summary>
         <p>
-          CardanoMix stores only the wallet/account and order data required for checkout, session security, payment reconciliation, and admin operations.
-          Data is not sold or used for advertising. PayPal processes payment data as the payment provider; Binance market data is used only for pricing.
-          Crypto assets and ADA pricing are volatile. The site admin does not provide financial advice, custody, investment guarantees, or loss coverage.
-          Users are responsible for wallet accuracy, payment confirmation, taxes, and local legal compliance.
+          CardanoMix is designed to provide a transparent and compliance-conscious voucher checkout experience for users who wish to purchase ADA-related vouchers.
         </p>
         <p>
-          Security posture follows data minimisation, purpose limitation, access control, secure cookies, hashed passwords, least-privilege secrets, and operational review patterns aligned with GDPR/DSGVO and modern ISMS/NIS2 risk-management expectations.
+          We only collect and store the account, wallet-address, order, session, and transaction-related data that is necessary to operate the checkout process, maintain account security, reconcile payments, and provide operational support. Personal data is not sold, shared for advertising purposes, or used for unrelated marketing activities.
         </p>
-      </div>
+        <p>
+          Payment information is processed by PayPal as the external payment provider. CardanoMix does not store full payment card details. Binance market data is used solely as a pricing reference for ADA exchange-rate calculations and is not used for trading, custody, or financial advisory services.
+        </p>
+        <p>
+          Cryptocurrency markets are volatile, and ADA prices may change rapidly. CardanoMix does not provide financial, investment, tax, or legal advice. CardanoMix does not provide custody services, investment guarantees, price guarantees, or compensation for market losses. Users are responsible for entering the correct wallet information, confirming their payment details, understanding applicable tax obligations, and ensuring that the use of the service is permitted under their local laws and regulations.
+        </p>
+        <p>
+          Our security and privacy approach is based on recognised data-protection and risk-management principles, including data minimisation, purpose limitation, access control, secure session handling, hashed passwords, least-privilege access to secrets, and regular operational review. These measures are designed to support GDPR/DSGVO principles and modern information-security expectations, including risk-management practices associated with ISMS and NIS2-oriented security frameworks where applicable.
+        </p>
+      </details>
     </footer>
   );
 }

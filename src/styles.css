@@ -430,6 +430,17 @@ h1 {
   position: sticky;
   top: 96px;
   padding: 18px;
+  transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
+}
+
+.cart-panel.mode-voucher {
+  transform: translateX(6px);
+  border-color: color-mix(in srgb, var(--accent-2) 45%, var(--line));
+}
+
+.cart-panel.mode-custom {
+  transform: translateX(-6px);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
 }
 
 .section-title {
@@ -532,6 +543,15 @@ input[type="checkbox"] {
 .signed-in {
   display: grid;
   gap: 12px;
+}
+
+.account-settings {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
 }
 
 .signed-user {
@@ -697,9 +717,7 @@ input[type="checkbox"] {
 }
 
 .site-footer {
-  display: grid;
-  grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
-  gap: 22px;
+  display: block;
   padding: 26px clamp(18px, 4vw, 52px) 42px;
   border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--surface) 76%, var(--bg));
@@ -711,6 +729,17 @@ input[type="checkbox"] {
   color: var(--muted);
   line-height: 1.55;
   font-size: 0.9rem;
+}
+
+.legal-copy summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 900;
+  padding: 10px 0;
+}
+
+.legal-copy p {
+  margin-top: 10px;
 }
 
 .legal-copy strong {
