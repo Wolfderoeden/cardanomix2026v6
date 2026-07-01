@@ -40,6 +40,10 @@ const rootDir = path.resolve(__dirname, "..");
 const distDir = path.join(rootDir, "dist");
 
 const orderSchema = z.object({
+  customer: z.object({
+    name: z.string().trim().min(2).max(80),
+    walletAddress: z.string().trim().min(24).max(160)
+  }),
   items: z
     .array(
       z.object({
@@ -277,7 +281,7 @@ export function createApp() {
     res.json({ ok: true });
   });
 
-  app.post("/api/orders", requireUser, async (req, res, next) => {
+  app.post("/api/orders", async (req, res, next) => {
     try {
       const payload = orderSchema.parse(req.body);
       const settings = await readSettings();
@@ -288,10 +292,10 @@ export function createApp() {
       const adaAmount = quoteAdaAmount(quoteUsd, price.price);
       const order = await createOrder({
         type: "voucher",
-        userId: req.user.id,
+        userId: req.user?.role === "user" ? req.user.id : null,
         customer: {
-          name: req.user.name,
-          walletAddress: req.user.walletAddress
+          name: payload.customer.name,
+          walletAddress: payload.customer.walletAddress
         },
         items,
         totalUsd,

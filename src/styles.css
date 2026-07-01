@@ -445,6 +445,7 @@ h1 {
 .product-card,
 .cart-panel,
 .auth-panel,
+.guest-checkout,
 .metric-card,
 .orders-table-wrap {
   border: 1px solid var(--line);
@@ -614,7 +615,8 @@ h1 {
   font-size: 2.05rem;
 }
 
-.auth-panel {
+.auth-panel,
+.guest-checkout {
   display: grid;
   gap: 12px;
   padding: 14px;

@@ -19,7 +19,13 @@ const authSchema = z.object({
   name: z.string().trim().min(2).max(80).optional()
 });
 
+const guestCustomerSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  walletAddress: z.string().trim().min(24).max(160)
+});
+
 const orderSchema = z.object({
+  customer: guestCustomerSchema,
   items: z
     .array(
       z.object({
@@ -618,7 +624,6 @@ async function handle(request, context) {
   }
 
   if (request.method === "POST" && path === "/api/orders") {
-    requireUser(user);
     const payload = orderSchema.parse(await request.json());
     const settings = await readSettings();
     const items = calculateOrderItems(payload.items, settings);
@@ -630,10 +635,10 @@ async function handle(request, context) {
     });
     const order = await createOrder({
       type: "voucher",
-      userId: user.id,
+      userId: user?.role === "user" ? user.id : null,
       customer: {
-        name: user.name,
-        walletAddress: user.walletAddress
+        name: payload.customer.name,
+        walletAddress: payload.customer.walletAddress
       },
       items,
       totalUsd,

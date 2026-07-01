@@ -309,10 +309,15 @@ function ProductCard({ product, adaPrice, marginPercent = 0, quantity, setQuanti
   );
 }
 
-function CartPanel({ products, cart, price, user, settings, orderMode, setOrderMode, setUser, setCart }) {
-  const [authMode, setAuthMode] = useState("register");
-  const [orders, setOrders] = useState([]);
+function CartPanel({ products, cart, price, settings, orderMode, setOrderMode, setCart }) {
   const [customUsd, setCustomUsd] = useState("");
+  const [customer, setCustomer] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("cardanomix_guest") || "{}");
+    } catch {
+      return {};
+    }
+  });
   const [paymentUrl, setPaymentUrl] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -336,74 +341,41 @@ function CartPanel({ products, cart, price, user, settings, orderMode, setOrderM
   const ada = price && quoteUsd ? (quoteUsd / price.price).toFixed(6) : "0.000000";
   const customUsdNumber = Number(customUsd);
   const customAdaQuote = price && Number.isFinite(customUsdNumber) && customUsdNumber > 0 ? customUsdNumber / price.price : 0;
+  const customerReady = String(customer.name || "").trim().length >= 2 && String(customer.walletAddress || "").trim().length >= 24;
 
-  async function loadOrders() {
-    if (!user) {
-      return;
-    }
-    const payload = await api("/api/orders/my");
-    setOrders(payload.orders);
+  function updateCustomer(patch) {
+    const nextCustomer = { ...customer, ...patch };
+    setCustomer(nextCustomer);
+    localStorage.setItem("cardanomix_guest", JSON.stringify(nextCustomer));
   }
-
-  useEffect(() => {
-    loadOrders().catch(() => {});
-  }, [user]);
 
   async function checkout() {
     setBusy(true);
     setError("");
     setStatus("");
+    setPaymentUrl("");
     try {
       const payload = await api("/api/orders", {
         method: "POST",
         body: {
+          customer: {
+            name: String(customer.name || "").trim(),
+            walletAddress: String(customer.walletAddress || "").trim()
+          },
           items: cartItems.map((item) => ({ productId: item.id, quantity: item.quantity }))
         }
       });
-      setStatus(`Order ${payload.order.publicId} received`);
+      setStatus(payload.order.paymentUrl ? `Order ${payload.order.publicId} received. Opening PayPal.` : `Order ${payload.order.publicId} received.`);
       setPaymentUrl(payload.order.paymentUrl || "");
       if (payload.order.paymentUrl) {
         window.location.href = payload.order.paymentUrl;
       }
       setCart({});
-      await loadOrders();
     } catch (requestError) {
       setError(requestError.message);
     } finally {
       setBusy(false);
     }
-  }
-
-  async function buyCustomAda() {
-    setBusy(true);
-    setError("");
-    setStatus("");
-    setPaymentUrl("");
-    try {
-      const payload = await api("/api/orders/custom", {
-        method: "POST",
-        body: {
-          adaAmount: Number(customAdaQuote.toFixed(6))
-        }
-      });
-      setStatus(`Order ${payload.order.publicId} received`);
-      setPaymentUrl(payload.order.paymentUrl || "");
-      if (payload.order.paymentUrl) {
-        window.location.href = payload.order.paymentUrl;
-      }
-      setCustomUsd("");
-      await loadOrders();
-    } catch (requestError) {
-      setError(requestError.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function logout() {
-    await api("/api/auth/logout", { method: "POST" });
-    setUser(null);
-    setOrders([]);
   }
 
   return (
@@ -464,41 +436,58 @@ function CartPanel({ products, cart, price, user, settings, orderMode, setOrderM
         </div>
       )}
 
-      {!user ? (
-        <AuthPanel mode={authMode} setMode={setAuthMode} onAuth={setUser} />
-      ) : (
-        <div className="signed-in">
-          <p className="muted wallet-note">{maskWallet(user.walletAddress)}</p>
-          {error && <p className="form-error">{error}</p>}
-          {status && <p className="form-success">{status}</p>}
-          {orderMode === "voucher" && (
-            <button className="primary-button" type="button" onClick={checkout} disabled={busy || cartItems.length === 0}>
-              <WalletCards size={17} />
-              {busy ? "Sending" : "Buy with PayPal"}
-            </button>
-          )}
-          {orderMode === "custom" && (
-            <button className="primary-button" type="button" disabled>
-              <ExternalLink size={17} />
-              Coming Soon
-            </button>
-          )}
+      <form className="guest-checkout" onSubmit={(event) => event.preventDefault()}>
+        <div className="section-title">
+          <WalletCards size={18} />
+          <span>Guest checkout</span>
         </div>
-      )}
+        <label>
+          Name
+          <input
+            value={customer.name || ""}
+            onChange={(event) => updateCustomer({ name: event.target.value })}
+            required
+            minLength={2}
+            autoComplete="name"
+            placeholder="Your name"
+          />
+        </label>
+        <label>
+          Cardano wallet
+          <input
+            value={customer.walletAddress || ""}
+            onChange={(event) => updateCustomer({ walletAddress: event.target.value })}
+            required
+            minLength={24}
+            autoComplete="off"
+            placeholder="addr1..."
+          />
+        </label>
+        {customer.walletAddress && <p className="muted wallet-note">Wallet: {maskWallet(customer.walletAddress)}</p>}
+        {error && <p className="form-error">{error}</p>}
+        {status && <p className="form-success">{status}</p>}
+        {paymentUrl && (
+          <a className="ghost-button" href={paymentUrl}>
+            <ExternalLink size={16} />
+            Open payment link
+          </a>
+        )}
+        {orderMode === "voucher" && (
+          <button className="primary-button" type="button" onClick={checkout} disabled={busy || cartItems.length === 0 || !customerReady}>
+            <WalletCards size={17} />
+            {busy ? "Sending" : "Buy with PayPal"}
+          </button>
+        )}
+        {orderMode === "custom" && (
+          <button className="primary-button" type="button" disabled>
+            <ExternalLink size={17} />
+            Coming Soon
+          </button>
+        )}
+      </form>
 
-      {!user && orderMode === "custom" && <p className="muted">Register with your wallet before continuing to PayPal.</p>}
-
-      {user && (
-        <div className="recent-orders" id="customer-orders">
-          <div className="mini-heading">Your orders</div>
-          {orders.length === 0 && <p className="muted">No previous orders yet.</p>}
-          {orders.map((order) => (
-            <div className="order-chip" key={order.id}>
-              <span>{order.publicId}</span>
-              <strong>{order.status} - {Number(order.adaAmount || 0).toFixed(4)} ADA</strong>
-            </div>
-          ))}
-        </div>
+      {orderMode === "custom" && (
+        <p className="muted">Custom ADA checkout is being prepared. Voucher checkout works without creating an account.</p>
       )}
     </aside>
   );
@@ -520,11 +509,6 @@ function Storefront({ state, setState, refreshPrice }) {
     }
   }
 
-  async function logout() {
-    await api("/api/auth/logout", { method: "POST" });
-    setState((current) => ({ ...current, user: null }));
-  }
-
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
@@ -534,11 +518,8 @@ function Storefront({ state, setState, refreshPrice }) {
       <header className="topbar">
         <Brand subtitle={content.brandSubtitle || "ADA Voucher Store"} />
         <nav>
-          {state.user ? (
-            <AccountMenu user={state.user} theme={theme} setTheme={setTheme} onLogout={logout} />
-          ) : (
-            <span className="muted">Wallet checkout</span>
-          )}
+          <ThemeSwitch theme={theme} setTheme={setTheme} />
+          <span className="muted">Guest checkout</span>
         </nav>
       </header>
 
@@ -579,11 +560,9 @@ function Storefront({ state, setState, refreshPrice }) {
           products={state.products}
           cart={cart}
           price={state.price}
-          user={state.user}
           settings={state.settings}
           orderMode={orderMode}
           setOrderMode={setOrderMode}
-          setUser={(user) => setState((current) => ({ ...current, user }))}
           setCart={setCart}
         />
       </main>
