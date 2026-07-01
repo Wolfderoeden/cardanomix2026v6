@@ -69,9 +69,6 @@ const settingsSchema = z.object({
   textContent: z
     .object({
       brandSubtitle: z.string().max(80).optional(),
-      heroEyebrow: z.string().max(80).optional(),
-      heroTitle: z.string().max(80).optional(),
-      heroBody: z.string().max(240).optional(),
       legalNotice: z.string().max(5000).optional()
     })
     .optional(),

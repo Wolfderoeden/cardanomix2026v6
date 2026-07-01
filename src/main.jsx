@@ -293,7 +293,6 @@ function ProductCard({ product, adaPrice, marginPercent = 0, quantity, setQuanti
           <span>{currency.format(product.priceUsd)}</span>
           <span>{adaAmount} ADA</span>
         </div>
-        {marginPercent > 0 && <small className="muted">ADA quote after {marginPercent}% service margin</small>}
       </div>
       <div className="stepper">
         <button
@@ -313,7 +312,7 @@ function CartPanel({ products, cart, price, settings, orderMode, setOrderMode, s
   const [customUsd, setCustomUsd] = useState("");
   const [customer, setCustomer] = useState(() => {
     try {
-      return JSON.parse(localStorage.getItem("cardanomix_guest") || "{}");
+      return JSON.parse(localStorage.getItem("cardanomix_checkout_customer") || "{}");
     } catch {
       return {};
     }
@@ -346,7 +345,7 @@ function CartPanel({ products, cart, price, settings, orderMode, setOrderMode, s
   function updateCustomer(patch) {
     const nextCustomer = { ...customer, ...patch };
     setCustomer(nextCustomer);
-    localStorage.setItem("cardanomix_guest", JSON.stringify(nextCustomer));
+    localStorage.setItem("cardanomix_checkout_customer", JSON.stringify(nextCustomer));
   }
 
   async function checkout() {
@@ -436,10 +435,10 @@ function CartPanel({ products, cart, price, settings, orderMode, setOrderMode, s
         </div>
       )}
 
-      <form className="guest-checkout" onSubmit={(event) => event.preventDefault()}>
+      <form className="checkout-form" onSubmit={(event) => event.preventDefault()}>
         <div className="section-title">
           <WalletCards size={18} />
-          <span>Guest checkout</span>
+          <span>Checkout</span>
         </div>
         <label>
           Name
@@ -486,9 +485,7 @@ function CartPanel({ products, cart, price, settings, orderMode, setOrderMode, s
         )}
       </form>
 
-      {orderMode === "custom" && (
-        <p className="muted">Custom ADA checkout is being prepared. Voucher checkout works without creating an account.</p>
-      )}
+      {orderMode === "custom" && <p className="muted">Custom ADA checkout is being prepared.</p>}
     </aside>
   );
 }
@@ -518,23 +515,12 @@ function Storefront({ state, setState, refreshPrice }) {
       <header className="topbar">
         <Brand subtitle={content.brandSubtitle || "ADA Voucher Store"} />
         <nav>
-          <ThemeSwitch theme={theme} setTheme={setTheme} />
-          <span className="muted">Guest checkout</span>
+          <PriceBadge price={state.price} onRefresh={refreshPrice} />
         </nav>
       </header>
 
       <main className="store-layout">
         <section className="store-main">
-          <div className="store-hero">
-            <div className="hero-copy">
-              {content.heroEyebrow && <span className="eyebrow">{content.heroEyebrow}</span>}
-              <h1>{content.heroTitle || "CardanoMix"}</h1>
-              <p>{content.heroBody || "Buy Cardano with vouchers — simple checkout, customer account, and live ADA pricing based on Binance."}</p>
-              <PriceBadge price={state.price} onRefresh={refreshPrice} />
-            </div>
-            <img className="hero-asset" src="/assets/voucher-stack.svg" alt="Stacked ADA voucher cards" />
-          </div>
-
           {state.error && (
             <div className="system-alert">
               <AlertTriangle size={18} />
@@ -566,15 +552,16 @@ function Storefront({ state, setState, refreshPrice }) {
           setCart={setCart}
         />
       </main>
-      <Footer settings={state.settings} />
+      <Footer settings={state.settings} theme={theme} setTheme={setTheme} />
     </div>
   );
 }
 
-function Footer({ settings }) {
+function Footer({ settings, theme, setTheme }) {
   const legalNotice = contentFrom(settings).legalNotice || DEFAULT_LEGAL_NOTICE;
   return (
     <footer className="site-footer">
+      <ThemeSwitch theme={theme} setTheme={setTheme} />
       <details className="legal-copy">
         <summary>Terms, Privacy, Risk & Liability Notice</summary>
         {legalNotice.split("\n\n").filter(Boolean).map((paragraph) => (
@@ -691,9 +678,6 @@ function AdminSettingsPanel({ settings, setSettings, paypalConfigured, products 
           ),
           textContent: {
             brandSubtitle: draft.textContent?.brandSubtitle || "",
-            heroEyebrow: draft.textContent?.heroEyebrow || "",
-            heroTitle: draft.textContent?.heroTitle || "",
-            heroBody: draft.textContent?.heroBody || "",
             legalNotice: draft.textContent?.legalNotice || ""
           },
           autoRedirectPayPal: Boolean(draft.autoRedirectPayPal)
@@ -784,28 +768,6 @@ function AdminSettingsPanel({ settings, setSettings, paypalConfigured, products 
           <input
             value={draft.textContent?.brandSubtitle || ""}
             onChange={(event) => setDraft({ ...draft, textContent: { ...(draft.textContent || {}), brandSubtitle: event.target.value } })}
-          />
-        </label>
-        <label>
-          Hero eyebrow
-          <input
-            value={draft.textContent?.heroEyebrow || ""}
-            onChange={(event) => setDraft({ ...draft, textContent: { ...(draft.textContent || {}), heroEyebrow: event.target.value } })}
-            placeholder="Leave empty to hide"
-          />
-        </label>
-        <label>
-          Hero title
-          <input
-            value={draft.textContent?.heroTitle || ""}
-            onChange={(event) => setDraft({ ...draft, textContent: { ...(draft.textContent || {}), heroTitle: event.target.value } })}
-          />
-        </label>
-        <label>
-          Hero body
-          <textarea
-            value={draft.textContent?.heroBody || ""}
-            onChange={(event) => setDraft({ ...draft, textContent: { ...(draft.textContent || {}), heroBody: event.target.value } })}
           />
         </label>
         <label className="wide-field">

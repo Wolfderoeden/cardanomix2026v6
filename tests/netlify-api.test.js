@@ -43,5 +43,6 @@ test("netlify settings expose margins and editable storefront copy", async () =>
   assert.equal(response.status, 200);
   assert.ok(body.settings.productMargins);
   assert.ok(body.settings.textContent);
-  assert.equal(body.settings.textContent.heroTitle, "CardanoMix");
+  assert.equal(body.settings.textContent.brandSubtitle, "ADA Voucher Store");
+  assert.deepEqual(Object.keys(body.settings.textContent).sort(), ["brandSubtitle", "legalNotice"]);
 });
